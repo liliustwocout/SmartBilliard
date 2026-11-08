@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+data/*.db*
+data/*.sqlite*
+data/recordings/
+data/datasets/
+*.log
+.playwright-cli/
+# Registration attachments contain private contact data; preserve them locally.
+/docs/references/*
+!/docs/references/README.md
