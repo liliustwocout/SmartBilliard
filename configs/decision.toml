@@ -1,0 +1,9 @@
+# Demo thresholds, not measured AI performance. Durations are seconds.
+policy = "PERSON_ONLY"
+presence_seconds = 8.0
+confidence_enter = 0.75
+confidence_exit = 0.55
+max_observation_gap_seconds = 2.5
+absence_grace_seconds = 3.0
+cooldown_seconds = 15.0
+cue_confidence = 0.8
