@@ -18,3 +18,7 @@ data/datasets/
 # Registration attachments contain private contact data; preserve them locally.
 /docs/references/*
 !/docs/references/README.md
+models/*.onnx
+models/*.pt
+models/*.engine
+!models/README.md

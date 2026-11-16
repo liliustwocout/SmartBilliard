@@ -13,6 +13,7 @@ class Detection:
     bbox: tuple[float, float, float, float]
     confidence: float
     track_id: int | None = None
+    foot_anchor: tuple[float, float] | None = None
 
 
 class CueDetector(Protocol):

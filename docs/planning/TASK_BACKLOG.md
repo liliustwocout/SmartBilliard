@@ -66,9 +66,9 @@ Theo dõi thực thi tại [GitHub issues và milestones](GITHUB_ISSUES.md). SB-
 
 ## SB-11 · Person và tracker
 - Description: YOLO pretrained person, ByteTrack/BoT-SORT, bbox/confidence/time/camera/track ID.
-- Owner: Sơn. Priority: P0. Dependencies: SB-09.
+- Owner: An (Full-stack & Project Lead). Priority: P0. Dependencies: SB-09.
 - Acceptance Criteria: đọc weights local, không tải khi demo, không lưu danh tính.
-- Status: TODO.
+- Status: DONE (YoloPersonDetector via OpenCV DNN on CPU; ByteTrack 2-stage IoU association; Foot Anchor calculation; VisionPipeline; 10 unit tests passed).
 
 ## SB-12 · Zone assignment
 - Description: foot anchor, standing zones, không tùy tiện gán nhiều bàn.
