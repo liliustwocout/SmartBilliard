@@ -1,6 +1,8 @@
-"""Contracts only in Phase 2; no camera or pretrained cue claims."""
+"""Vision contracts and protocols for SmartBilliard (Phase 2 & Phase 3)."""
 from dataclasses import dataclass
 from typing import Literal, Protocol
+
+SourceStatus = Literal["CONNECTED", "CONNECTING", "DISCONNECTED", "ERROR", "EOF", "CLOSED"]
 
 
 @dataclass(frozen=True)
@@ -20,6 +22,11 @@ class CueDetector(Protocol):
 
 
 class VideoSource(Protocol):
+    camera_id: str
+
+    @property
+    def status(self) -> str: ...
+
     def read(self) -> tuple[bool, object | None]: ...
 
     def close(self) -> None: ...
