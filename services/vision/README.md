@@ -12,11 +12,13 @@
   - Geometry validation (Shoelace, self-intersection, point-in-polygon, standing zone overlap detection).
   - Snapshot camera preview hoặc ảnh tham chiếu phòng bi-a.
   - Lưu trữ cấu hình `configs/zones.json`.
-- `detector.py` & `tracker.py` & `pipeline.py` (**SB-11**):
+- `detector.py` & `tracker.py` (**SB-11**):
   - `YoloPersonDetector`: chạy mô hình YOLOv8n ONNX trên CPU thông qua OpenCV DNN, trích xuất bounding box chuẩn hóa và Foot Anchor (tâm đáy).
   - `ByteTracker`: thuật toán ByteTrack 2 tầng (pure Python + NumPy), liên kết ID ổn định khi người chơi di chuyển, cúi người hoặc bị che khuất tạm thời.
-  - `VisionPipeline`: kết nối VideoSource -> Detector -> Tracker -> list[Detection].
+- `mapper.py` & `pipeline.py` (**SB-12**):
+  - `TableZoneMapper`: chiếu Foot Anchor vào đa giác vùng bàn, xác định trạng thái `ASSIGNED`, `OUTSIDE`, hoặc `AMBIGUOUS`.
+  - Phân tích và sinh `TableObservationSummary` tương thích trực tiếp với hợp đồng `Observation` của Decision Engine.
+  - `VisionPipeline`: kết nối VideoSource -> Detector -> Tracker -> Mapper -> per-table Observations.
 
 Tiếp theo:
-- **SB-12**: Zone Mapper (chiếu Foot Anchor vào đa giác vùng bàn và gán cờ AMBIGUOUS khi đứng giữa 2 bàn).
-- **SB-13**: Camera Event Ingestion (đẩy sự kiện nhận diện từ Camera/Video vào Decision Engine của FastAPI).
+- **SB-13**: Camera Event Ingestion (background task đọc luồng camera/video và đẩy sự kiện nhận diện thật vào Decision Engine của FastAPI).

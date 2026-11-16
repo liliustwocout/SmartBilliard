@@ -132,3 +132,24 @@ def test_vision_pipeline_integration():
     assert det.confidence == 0.85
     assert det.track_id is not None
     assert det.foot_anchor == (0.25, 0.6)
+
+
+def test_vision_pipeline_with_zone_mapper():
+    mock_source = MagicMock(spec=VideoSource)
+    mock_source.camera_id = "cam-mock"
+    mock_source.read.return_value = (True, np.zeros((480, 640, 3), dtype=np.uint8))
+
+    mock_detector = MagicMock(spec=YoloPersonDetector)
+    mock_detector.detect.return_value = [
+        PersonDetection(bbox=(0.2, 0.2, 0.3, 0.6), confidence=0.88, foot_anchor=(0.25, 0.6))
+    ]
+
+    mock_mapper = MagicMock()
+    mock_mapper.map_frame.return_value = ([], {1: MagicMock(present=True, table_id=1)})
+
+    pipeline = VisionPipeline(source=mock_source, detector=mock_detector, mapper=mock_mapper)
+    ok, frame, detections, summaries = pipeline.process_frame_for_tables()
+
+    assert ok is True
+    assert 1 in summaries
+    assert summaries[1].present is True
