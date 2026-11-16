@@ -19,10 +19,12 @@ from sqlalchemy.pool import StaticPool
 from apps.api.billing import quote, utc
 from apps.api.config import ROOT, Settings
 from apps.api.models import Base, DetectionEvent, PlaySession, Table
-from apps.api.schemas import SimulatedObservation
+from apps.api.schemas import IngestionObservation, SimulatedObservation
 from services.vision.decision import Memory, Observation, advance
 from services.vision.calibration import CalibrationConfig, load_calibration_config, save_calibration_config
+from services.vision.mapper import TableObservationSummary
 from services.vision.preview import get_preview_frame_jpeg
+from services.vision.runner import CameraRunner
 
 
 def iso(value: datetime | None) -> str | None:
@@ -47,6 +49,70 @@ def create_app(settings: Settings | None = None,
     lock = asyncio.Lock()
     clients: set[asyncio.Queue] = set()
 
+    def process_observation(db, table_id: int, event_id: str, present: bool,
+                            confidence: float, ambiguous: bool, source: str,
+                            cue_confidence: float | None = None,
+                            normalized_payload: dict | None = None,
+                            now: datetime | None = None):
+        now = now or utc(clock())
+        table = require_table(db, table_id)
+        previous = db.get(DetectionEvent, str(event_id))
+        normalized = normalized_payload or {
+            "event_id": str(event_id), "table_id": table_id, "present": present,
+            "confidence": confidence, "ambiguous": ambiguous,
+            "cue_confidence": cue_confidence, "source": source,
+        }
+        if previous:
+            if previous.payload != normalized:
+                raise HTTPException(409, "event_id đã được dùng với nội dung khác")
+            return {**previous.result, "duplicate": True}
+
+        current = active_session(db, table.id)
+        decision = advance(Memory(**table.memory), Observation(
+            present=present, confidence=confidence,
+            ambiguous=ambiguous, cue_confidence=cue_confidence,
+        ), now.timestamp(), settings.decision, active=current is not None,
+            auto_open=settings.auto_open, cue_detector_ready=False)
+        table.memory = asdict(decision.memory)
+        if decision.should_open and current is None:
+            current = new_session(db, table, now, source, source)
+
+        result = {"state": decision.memory.state, "reason": decision.reason,
+                  "session_id": current.id if current else None, "source": source}
+        event_type = "AMBIGUOUS" if ambiguous else ("PRESENCE" if present else "ABSENCE")
+        db.add(DetectionEvent(id=str(event_id), table_id=table.id,
+            event_type=event_type, confidence=confidence, timestamp=now,
+            source=source, payload=normalized, result=result))
+        return {**result, "duplicate": False}
+
+    def on_camera_observation(table_id: int, summary: TableObservationSummary, source_type: str):
+        eid = str(uuid4())
+        try:
+            with Session(engine) as db:
+                process_observation(
+                    db, table_id, eid, summary.present, summary.confidence,
+                    summary.ambiguous, source_type, summary.cue_confidence,
+                    {
+                        "event_id": eid, "table_id": table_id, "present": summary.present,
+                        "confidence": summary.confidence, "ambiguous": summary.ambiguous,
+                        "source": source_type, "track_ids": summary.track_ids,
+                        "people_count": summary.people_count,
+                    }
+                )
+                db.commit()
+            changed()
+        except Exception:
+            pass
+
+    runner = CameraRunner(
+        source=settings.camera_source,
+        camera_id=settings.camera_id,
+        zones_config_path=settings.zones_config,
+        fallback_zones_path=ROOT / "configs/zones.example.json",
+        model_path=ROOT / "models/yolov8n.onnx",
+        on_observation=on_camera_observation,
+    )
+
     @asynccontextmanager
     async def lifespan(_app):
         Base.metadata.create_all(engine)
@@ -56,7 +122,10 @@ def create_app(settings: Settings | None = None,
                     db.add(Table(id=number, name=f"Bàn {number:02}", hourly_rate=settings.hourly_rate,
                                  memory=asdict(Memory())))
             db.commit()
+        if settings.camera_enabled:
+            runner.start()
         yield
+        runner.stop()
         engine.dispose()
 
     app = FastAPI(title="SmartBilliard · Phase 2", version="0.1.0", lifespan=lifespan)
@@ -136,11 +205,21 @@ def create_app(settings: Settings | None = None,
                 DetectionEvent.timestamp.desc(), DetectionEvent.id.desc()).limit(30))]
             revenue = db.scalar(select(func.coalesce(func.sum(PlaySession.total_amount), 0)).where(
                 PlaySession.status == "PAID"))
+            cam_online = bool(runner and runner.is_running and runner.status in ("CONNECTED", "RUNNING"))
+            if runner and runner.is_running:
+                sys_mode = f"{runner.source_type}_LIVE"
+            elif settings.simulation_enabled:
+                sys_mode = "SIMULATED"
+            else:
+                sys_mode = "MANUAL_ONLY"
+
             return {
                 "type": "snapshot", "server_time": iso(now), "timezone": settings.timezone,
-                "mode": "SIMULATED" if settings.simulation_enabled else "MANUAL_ONLY",
+                "mode": sys_mode,
                 "simulation_enabled": settings.simulation_enabled, "auto_open_enabled": settings.auto_open,
-                "camera_ready": False, "cue_detector_ready": False,
+                "camera_ready": cam_online,
+                "camera_status": runner.status if runner else "DISABLED",
+                "cue_detector_ready": False,
                 "decision_config": settings.decision.model_dump(), "tables": tables, "events": events,
                 "active_count": len(active), "revenue_vnd": revenue,
                 "running_amount_vnd": sum(quote(s.started_at, now, s.hourly_rate_snapshot)["amount_vnd"] for s in active.values()),
@@ -148,7 +227,9 @@ def create_app(settings: Settings | None = None,
 
     @app.get("/api/health")
     async def health():
-        return {"status": "ok", "phase": 2, "camera_ready": False}
+        cam_online = bool(runner and runner.is_running and runner.status in ("CONNECTED", "RUNNING"))
+        return {"status": "ok", "phase": 2, "camera_ready": cam_online,
+                "camera_status": runner.status if runner else "DISABLED"}
 
     @app.get("/api/dashboard")
     async def dashboard():
@@ -219,33 +300,52 @@ def create_app(settings: Settings | None = None,
         if not settings.simulation_enabled:
             raise HTTPException(403, "Chế độ mô phỏng đã tắt")
         async with lock:
-            now = utc(clock())
             with Session(engine) as db:
-                table = require_table(db, payload.table_id)
-                previous = db.get(DetectionEvent, str(payload.event_id))
-                normalized = payload.model_dump(mode="json")
-                if previous:
-                    if previous.payload != normalized:
-                        raise HTTPException(409, "event_id đã được dùng với nội dung khác")
-                    return {**previous.result, "duplicate": True}
-                current = active_session(db, table.id)
-                decision = advance(Memory(**table.memory), Observation(
-                    present=payload.present, confidence=payload.confidence,
-                    ambiguous=payload.ambiguous, cue_confidence=payload.cue_confidence,
-                ), now.timestamp(), settings.decision, active=current is not None,
-                    auto_open=settings.auto_open, cue_detector_ready=False)
-                table.memory = asdict(decision.memory)
-                if decision.should_open and current is None:
-                    current = new_session(db, table, now, "SIMULATED", "SIMULATED")
-                result = {"state": decision.memory.state, "reason": decision.reason,
-                          "session_id": current.id if current else None, "source": "SIMULATED"}
-                db.add(DetectionEvent(id=str(payload.event_id), table_id=table.id,
-                    event_type="AMBIGUOUS" if payload.ambiguous else "PRESENCE" if payload.present else "ABSENCE",
-                    confidence=payload.confidence, timestamp=now, source="SIMULATED",
-                    payload=normalized, result=result))
+                result = process_observation(
+                    db, payload.table_id, str(payload.event_id),
+                    payload.present, payload.confidence, payload.ambiguous,
+                    "SIMULATED", payload.cue_confidence, payload.model_dump(mode="json"),
+                )
                 db.commit()
             changed()
-            return {**result, "duplicate": False}
+            return result
+
+    @app.post("/api/ingestion/events")
+    async def ingest_camera_event(payload: IngestionObservation):
+        async with lock:
+            with Session(engine) as db:
+                result = process_observation(
+                    db, payload.table_id, str(payload.event_id),
+                    payload.present, payload.confidence, payload.ambiguous,
+                    payload.source, payload.cue_confidence, payload.model_dump(mode="json"),
+                )
+                db.commit()
+            changed()
+            return result
+
+    @app.get("/api/camera/status")
+    async def camera_status():
+        return {
+            "enabled": settings.camera_enabled,
+            "running": runner.is_running,
+            "status": runner.status,
+            "source_type": runner.source_type,
+            "camera_id": settings.camera_id,
+            "camera_source": settings.camera_source,
+            "fps": runner.measured_fps,
+        }
+
+    @app.post("/api/camera/start")
+    async def camera_start():
+        ok = runner.start()
+        changed()
+        return {"success": ok, "status": runner.status}
+
+    @app.post("/api/camera/stop")
+    async def camera_stop():
+        runner.stop()
+        changed()
+        return {"success": True, "status": runner.status}
 
     @app.get("/api/calibration/zones")
     async def get_calibration_zones():
@@ -278,7 +378,11 @@ def create_app(settings: Settings | None = None,
     @app.get("/api/calibration/preview")
     async def get_calibration_preview():
         try:
-            jpeg_bytes = get_preview_frame_jpeg(settings.camera_source, settings.camera_id)
+            jpeg_bytes = None
+            if runner and runner.is_running:
+                jpeg_bytes = runner.get_latest_frame_jpeg()
+            if jpeg_bytes is None:
+                jpeg_bytes = get_preview_frame_jpeg(settings.camera_source, settings.camera_id)
             return Response(content=jpeg_bytes, media_type="image/jpeg",
                             headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
         except Exception as err:

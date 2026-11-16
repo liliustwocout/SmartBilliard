@@ -15,6 +15,7 @@ export type DetectionEvent = {
 export type Snapshot = {
   type: 'snapshot'; server_time: string; timezone: string; mode: string;
   simulation_enabled: boolean; auto_open_enabled: boolean; camera_ready: boolean;
+  camera_status?: string;
   cue_detector_ready: boolean; decision_config: {
     policy: string; presence_seconds: number; confidence_enter: number; confidence_exit: number;
     max_observation_gap_seconds: number; absence_grace_seconds: number;
