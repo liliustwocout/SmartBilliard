@@ -54,9 +54,9 @@ Theo dõi thực thi tại [GitHub issues và milestones](GITHUB_ISSUES.md). SB-
 
 ## SB-09 · Camera/video adapters
 - Description: USB/RTSP/file cùng VideoSource, reconnect/backoff, trạng thái mất frame, env.
-- Owner: Sơn. Priority: P0. Dependencies: SB-08.
+- Owner: An (Full-stack & Project Lead). Priority: P0. Dependencies: SB-08.
 - Acceptance Criteria: nguồn thực, loss/recovery không mở nhầm, không log password RTSP.
-- Status: TODO (milestone tiếp theo).
+- Status: DONE (FileVideoSource, USBCameraSource, RTSPCameraSource; URI masking; reconnect/backoff; stale frame drop; 8 unit tests passed).
 
 ## SB-10 · ROI editor và calibration
 - Description: preview, vẽ/lưu play/standing polygon chuẩn hóa cho từng bàn.
