@@ -72,6 +72,7 @@ class CameraRunner:
         self._latest_detections: list[Detection] = []
         self._latest_summaries: dict[int, TableObservationSummary] = {}
         self._fps_measured: float = 0.0
+        self._calibration_cfg: CalibrationConfig | None = None
 
     @property
     def is_running(self) -> bool:
@@ -102,6 +103,45 @@ class CameraRunner:
             ok, buf = cv2.imencode(".jpg", self._latest_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
             return buf.tobytes() if ok else None
 
+    def get_annotated_frame_jpeg(self) -> bytes | None:
+        """Render AI detections, tracking IDs, and ROI zones onto latest frame as JPEG."""
+        with self._lock:
+            if self._latest_frame is None:
+                return None
+            frame = self._latest_frame.copy()
+            detections = list(self._latest_detections)
+            summaries = dict(self._latest_summaries)
+            cfg = self._calibration_cfg
+            fps = self._fps_measured
+            src_type = self.source_type
+            cam_id = self.camera_id
+
+        from services.vision.annotator import draw_frame_annotations
+        annotated = draw_frame_annotations(
+            frame=frame,
+            detections=detections,
+            summaries=summaries,
+            config=cfg,
+            fps=fps,
+            source_type=src_type,
+            camera_id=cam_id,
+        )
+        import cv2
+        ok, buf = cv2.imencode(".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        return buf.tobytes() if ok else None
+
+    def reload_calibration_config(self) -> None:
+        """Hot-reload zone configuration into active pipeline without restarting."""
+        with self._lock:
+            try:
+                cfg = load_calibration_config(self.zones_config_path, self.fallback_zones_path)
+                self._calibration_cfg = cfg
+                if self._pipeline:
+                    self._pipeline.mapper = TableZoneMapper(cfg)
+                logger.info("Hot-reloaded calibration config with %d tables", len(cfg.tables))
+            except Exception as err:
+                logger.warning("Could not reload calibration config: %s", err)
+
     def get_latest_summaries(self) -> dict[int, TableObservationSummary]:
         with self._lock:
             return dict(self._latest_summaries)
@@ -119,6 +159,7 @@ class CameraRunner:
 
                 # 2. Initialize calibration mapper
                 calibration_cfg = load_calibration_config(self.zones_config_path, self.fallback_zones_path)
+                self._calibration_cfg = calibration_cfg
                 mapper = TableZoneMapper(calibration_cfg)
 
                 # 3. Initialize detector & tracker

@@ -350,3 +350,13 @@ def test_camera_controls_status_and_lifecycle(client):
     assert resp_stop.json()["status"] == "STOPPED"
 
 
+def test_camera_frame_endpoint(client):
+    client, _ = client
+    resp = client.get("/api/camera/frame")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/jpeg"
+    assert len(resp.content) > 500
+    assert resp.content.startswith(b"\xff\xd8")
+
+
+
