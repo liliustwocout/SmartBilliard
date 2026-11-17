@@ -178,9 +178,11 @@ class CalibrationConfig(BaseModel):
         return warnings
 
 
-def load_calibration_config(config_path: Path, fallback_path: Path | None = None) -> CalibrationConfig:
+def load_calibration_config(config_path: str | Path, fallback_path: str | Path | None = None) -> CalibrationConfig:
     """Load calibration config from json file, falling back if not found."""
-    target = config_path if config_path.exists() else (fallback_path if fallback_path and fallback_path.exists() else None)
+    p_config = Path(config_path)
+    p_fallback = Path(fallback_path) if fallback_path else None
+    target = p_config if p_config.exists() else (p_fallback if p_fallback and p_fallback.exists() else None)
     if target is None:
         raise FileNotFoundError(f"Neither {config_path} nor fallback exists")
 
@@ -189,8 +191,9 @@ def load_calibration_config(config_path: Path, fallback_path: Path | None = None
     return CalibrationConfig.model_validate(data)
 
 
-def save_calibration_config(config: CalibrationConfig, save_path: Path) -> None:
+def save_calibration_config(config: CalibrationConfig, save_path: str | Path) -> None:
     """Save calibration configuration to JSON with pretty indentation."""
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(save_path, "w", encoding="utf-8") as f:
+    p_save = Path(save_path)
+    p_save.parent.mkdir(parents=True, exist_ok=True)
+    with open(p_save, "w", encoding="utf-8") as f:
         json.dump(config.model_dump(), f, indent=2, ensure_ascii=False)

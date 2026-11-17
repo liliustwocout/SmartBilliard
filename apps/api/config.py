@@ -28,6 +28,7 @@ class Settings:
     camera_id: str = "cam-01"
     camera_source: str = "0"
     zones_config: str = str(ROOT / "configs/zones.json")
+    camera_enabled: bool = False
 
     def __post_init__(self):
         if not 1 <= self.table_count <= 8:
@@ -54,4 +55,5 @@ class Settings:
             camera_id=os.environ.get("CAMERA_ID", cls.camera_id),
             camera_source=os.environ.get("CAMERA_SOURCE", cls.camera_source),
             zones_config=os.environ.get("ZONES_CONFIG", str(ROOT / "configs/zones.json")),
+            camera_enabled=env_bool("CAMERA_ENABLED", False),
         )

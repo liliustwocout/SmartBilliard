@@ -78,9 +78,9 @@ Theo dõi thực thi tại [GitHub issues và milestones](GITHUB_ISSUES.md). SB-
 
 ## SB-13 · Camera event integration
 - Description: đưa observations thật vào FSM qua ingestion có xác thực riêng; queue có giới hạn.
-- Owner: Đạt. Priority: P0. Dependencies: SB-12, SB-06.
+- Owner: An (Full-stack & Project Lead). Priority: P0. Dependencies: SB-12, SB-06.
 - Acceptance Criteria: source CAMERA/VIDEO đúng thực tế; stale/buffered frame không mở phiên; không chặn WS.
-- Status: TODO.
+- Status: DONE (CameraRunner background thread; CameraObservation ingestion endpoint /api/ingestion/events; CAMERA/VIDEO provenance tracking; camera lifecycle endpoints; 24 API tests passed; smoke test passed).
 
 ## SB-14 · MINI_TABLE adapter
 - Description: đánh giá hand detector khi không thấy toàn thân; policy yêu cầu xác nhận riêng.

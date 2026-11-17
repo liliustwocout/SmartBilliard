@@ -296,3 +296,57 @@ def test_calibration_api_endpoints(client, tmp_path):
     resp_post_invalid = client.post("/api/calibration/zones", json=invalid_payload)
     assert resp_post_invalid.status_code == 422
 
+
+def test_camera_event_ingestion_and_provenance(client):
+    client, clock = client
+    eid = str(uuid4())
+
+    payload = {
+        "event_id": eid,
+        "table_id": 1,
+        "present": True,
+        "confidence": 0.88,
+        "ambiguous": False,
+        "source": "CAMERA",
+        "track_ids": [101],
+        "people_count": 1,
+    }
+
+    # 1. Ingest camera event
+    resp = client.post("/api/ingestion/events", json=payload)
+    assert resp.status_code == 200
+    res_data = resp.json()
+    assert res_data["duplicate"] is False
+    assert res_data["source"] == "CAMERA"
+
+    # 2. Replay with identical payload -> idempotent
+    resp_replay = client.post("/api/ingestion/events", json=payload)
+    assert resp_replay.status_code == 200
+    assert resp_replay.json()["duplicate"] is True
+
+    # 3. Conflicting payload with same event_id -> 409 Conflict
+    conflict_payload = dict(payload)
+    conflict_payload["confidence"] = 0.50
+    resp_conflict = client.post("/api/ingestion/events", json=conflict_payload)
+    assert resp_conflict.status_code == 409
+
+    # 4. Check events list in dashboard shows CAMERA provenance
+    dash = client.get("/api/dashboard").json()
+    latest_event = next(e for e in dash["events"] if e["id"] == eid)
+    assert latest_event["source"] == "CAMERA"
+
+
+def test_camera_controls_status_and_lifecycle(client):
+    client, _ = client
+    resp_status = client.get("/api/camera/status")
+    assert resp_status.status_code == 200
+    status_data = resp_status.json()
+    assert "status" in status_data
+    assert "running" in status_data
+
+    # Stop camera
+    resp_stop = client.post("/api/camera/stop")
+    assert resp_stop.status_code == 200
+    assert resp_stop.json()["status"] == "STOPPED"
+
+

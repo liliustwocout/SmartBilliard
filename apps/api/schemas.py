@@ -1,3 +1,4 @@
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -11,3 +12,16 @@ class SimulatedObservation(BaseModel):
     confidence: float = Field(default=.9, ge=0, le=1)
     ambiguous: bool = False
     cue_confidence: float | None = Field(default=None, ge=0, le=1)
+
+
+class IngestionObservation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    event_id: UUID
+    table_id: int = Field(ge=1, le=8)
+    present: bool = True
+    confidence: float = Field(default=.85, ge=0, le=1)
+    ambiguous: bool = False
+    cue_confidence: float | None = Field(default=None, ge=0, le=1)
+    source: Literal["CAMERA", "VIDEO", "SIMULATED"] = "CAMERA"
+    track_ids: list[int] = Field(default_factory=list)
+    people_count: int = 1

@@ -20,6 +20,7 @@ export const statusLabel: Record<string, string> = {
 };
 export const sourceLabel: Record<string, string> = {
   STAFF: 'Nhân viên', STAFF_CONFIRMATION: 'Nhân viên xác nhận', SIMULATED: 'Mô phỏng',
+  CAMERA: 'Camera AI', VIDEO: 'Video thực tế',
 };
 export const reasonLabel: Record<string, string> = {
   COOLDOWN: 'Đang chờ sau thanh toán', OUT_OF_ORDER: 'Tín hiệu cũ bị bỏ qua',
