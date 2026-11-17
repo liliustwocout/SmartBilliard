@@ -72,9 +72,9 @@ Theo dõi thực thi tại [GitHub issues và milestones](GITHUB_ISSUES.md). SB-
 
 ## SB-12 · Zone assignment
 - Description: foot anchor, standing zones, không tùy tiện gán nhiều bàn.
-- Owner: Sơn + Đạt. Priority: P0. Dependencies: SB-10, SB-11.
+- Owner: An (Full-stack & Project Lead). Priority: P0. Dependencies: SB-10, SB-11.
 - Acceptance Criteria: đi ngang/giữa hai bàn/che khuất có labeled video test, unknown → AMBIGUOUS.
-- Status: TODO.
+- Status: DONE (TableZoneMapper: foot anchor to standing zones mapping, boundary ambiguity resolution, frame aggregation into TableObservationSummary; 5 unit tests passed).
 
 ## SB-13 · Camera event integration
 - Description: đưa observations thật vào FSM qua ingestion có xác thực riêng; queue có giới hạn.
