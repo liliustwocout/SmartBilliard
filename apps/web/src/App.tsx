@@ -114,7 +114,7 @@ export default function App() {
       <div className="workspace"><span className="workspace-avatar">SB</span><div>Phòng demo PSI2026<small>Không gian cục bộ</small></div></div>
       <p className="nav-label">QUẢN LÝ VẬN HÀNH</p>
       <nav aria-label="Điều hướng chính">
-        {[['dashboard', '◫', 'Tổng quan bàn'], ['history', '≡', 'Lịch sử phiên'], ['calibration', '⛶', 'Hiệu chuẩn ROI'], ['system', '⚙', 'Hệ thống & camera']].map(([id, icon, label]) =>
+        {[['dashboard', '◫', 'Tổng quan bàn'], ['live', '◉', 'Camera trực tiếp'], ['history', '≡', 'Lịch sử phiên'], ['calibration', '⛶', 'Hiệu chuẩn ROI'], ['system', '⚙', 'Hệ thống & camera']].map(([id, icon, label]) =>
           <button key={id} className={tab === id ? 'nav-item current' : 'nav-item'} onClick={() => setTab(id)} aria-current={tab === id ? 'page' : undefined}>
             <span aria-hidden="true">{icon}</span>{label}{id === 'dashboard' && <b>{data?.tables.length ?? '—'}</b>}
           </button>)}
@@ -125,7 +125,7 @@ export default function App() {
     <main>
       <header className="topbar"><div><span className="breadcrumb">Không gian làm việc</span><span className="breadcrumb-divider">/</span><span>Phòng demo</span></div><div className="connection"><i className={online ? 'dot green' : 'dot amber'} />{online ? 'Đã đồng bộ' : 'Đang kết nối lại'}<span className="local-tag">LOCAL</span></div></header>
       <div className="page-content">
-        <div className="page-heading"><div><p className="eyebrow">SMARTBILLIARD / {tab === 'history' ? 'LỊCH SỬ' : tab === 'calibration' ? 'HIỆU CHUẨN ROI' : tab === 'system' ? 'HỆ THỐNG' : 'TỔNG QUAN'}</p><h1>{tab === 'history' ? 'Lịch sử phiên chơi' : tab === 'calibration' ? 'Hiệu chuẩn vùng quan sát bàn' : tab === 'system' ? 'Cấu hình & khả năng' : 'Mọi bàn chơi. Một góc nhìn.'}</h1><p>{tab === 'dashboard' ? 'Theo dõi hoạt động, xác nhận mở bàn và quản lý phiên chơi tại một nơi.' : tab === 'calibration' ? 'Căn chỉnh đa giác mặt nỉ và vùng đứng đánh của từng bàn trên khung hình camera.' : 'Dữ liệu cục bộ, nguồn tín hiệu rõ ràng, trạng thái được cập nhật từ backend.'}</p></div><div className="server-clock"><small>GIỜ MÁY CHỦ</small><span>{data ? dateTime(data.server_time, data.timezone) : 'Đang tải…'}</span></div></div>
+        <div className="page-heading"><div><p className="eyebrow">SMARTBILLIARD / {tab === 'live' ? 'CAMERA TRỰC TIẾP' : tab === 'history' ? 'LỊCH SỬ' : tab === 'calibration' ? 'HIỆU CHUẨN ROI' : tab === 'system' ? 'HỆ THỐNG' : 'TỔNG QUAN'}</p><h1>{tab === 'live' ? 'Luồng Camera & Nhận diện AI' : tab === 'history' ? 'Lịch sử phiên chơi' : tab === 'calibration' ? 'Hiệu chuẩn vùng quan sát bàn' : tab === 'system' ? 'Cấu hình & khả năng' : 'Mọi bàn chơi. Một góc nhìn.'}</h1><p>{tab === 'live' ? 'Theo dõi luồng video trực tiếp từ camera, bounding box người chơi và điểm neo bàn theo thời gian thực.' : tab === 'dashboard' ? 'Theo dõi hoạt động, xác nhận mở bàn và quản lý phiên chơi tại một nơi.' : tab === 'calibration' ? 'Căn chỉnh đa giác mặt nỉ và vùng đứng đánh của từng bàn trên khung hình camera.' : 'Dữ liệu cục bộ, nguồn tín hiệu rõ ràng, trạng thái được cập nhật từ backend.'}</p></div><div className="server-clock"><small>GIỜ MÁY CHỦ</small><span>{data ? dateTime(data.server_time, data.timezone) : 'Đang tải…'}</span></div></div>
         <div className="demo-banner"><span className="demo-badge">{data?.mode === 'CAMERA_LIVE' ? 'CAMERA LIVE' : data?.mode === 'VIDEO_LIVE' ? 'VIDEO LIVE' : data?.mode === 'MANUAL_ONLY' ? 'THỦ CÔNG' : 'MÔ PHỎNG'}</span><p>{data?.mode === 'CAMERA_LIVE' ? 'Nguồn camera AI đang hoạt động và nhận diện người theo thời gian thực.' : data?.mode === 'VIDEO_LIVE' ? 'Nguồn video thực tế đang phân tích và theo dõi người chơi theo thời gian thực.' : data?.mode === 'MANUAL_ONLY' ? 'Nguồn mô phỏng đã tắt. Bạn vẫn có thể mở và chốt bàn bằng tay.' : 'Đang kiểm chứng luồng tích hợp bằng sự kiện nhân tạo. Dùng tab Hiệu chuẩn ROI để cấu hình camera.'}</p></div>
         {!online && <div className="message warning" role="status">Mất kết nối realtime. Dữ liệu có thể đã cũ; các thao tác đang tạm khóa.</div>}
         {error && <div className="message error" role="alert">{error}<button onClick={() => setError('')} aria-label="Đóng lỗi">×</button></div>}
@@ -157,12 +157,95 @@ export default function App() {
                 <button type="button" className="button subtle" disabled={locked} onClick={() => void act(() => request('/camera/start', {}), 'Đã bật camera nhận diện trực tiếp.')}>Bật Camera AI</button>
                 <button type="button" className="button subtle" disabled={locked} onClick={() => void act(() => request('/camera/stop', {}), 'Đã dừng luồng camera.')}>Dừng Camera</button>
               </div>
+              <div style={{ marginBottom: '0.6rem', borderRadius: '6px', overflow: 'hidden', border: '1px solid #30363d', background: '#0a0d14', position: 'relative' }}>
+                <img
+                  src="/api/camera/stream"
+                  alt="Camera Live Preview"
+                  style={{ width: '100%', height: '140px', objectFit: 'cover', display: 'block', cursor: 'pointer' }}
+                  onClick={() => setTab('live')}
+                  title="Click để phóng to luồng camera"
+                />
+                <button
+                  type="button"
+                  style={{
+                    position: 'absolute', bottom: '6px', right: '6px',
+                    fontSize: '0.72rem', background: 'rgba(0,0,0,0.7)',
+                    color: '#fff', border: '1px solid #555', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer'
+                  }}
+                  onClick={() => setTab('live')}
+                >
+                  Phóng to ⛶
+                </button>
+              </div>
               <button className={`button full-width ${simulating ? 'danger' : 'primary'}`} disabled={locked || !data.simulation_enabled} onClick={() => simulating ? void stopSimulation() : setSimulating(true)}>{simulating ? 'Dừng phát tín hiệu' : 'Bắt đầu tín hiệu hiện diện'}</button>
               <button className="button subtle full-width" disabled={locked || simulating || !lastEvent.current || !data.simulation_enabled} onClick={() => void act(() => request('/simulations/observations', lastEvent.current), 'Đã gửi lại event_id cũ. Backend loại trùng, không tạo thêm phiên.')}>Gửi lại sự kiện gần nhất</button>
               <div className="simulation-state"><i className={simulating && online ? 'dot green' : 'dot muted'} />{simulating ? online ? 'Đang phát tín hiệu nhân tạo' : 'Tạm dừng vì mất kết nối' : 'Chưa phát tín hiệu'}<span>{data.decision_config.policy}</span></div>
             </section>
             <section className="activity-panel"><div className="section-heading"><h2>Nhật ký tín hiệu</h2><span className="outline-badge">{table?.name}</span></div><div className="event-list">{data.events.filter(item => item.table_id === selected).slice(0, 8).map(item => <div className="event" key={item.id}><i className="event-dot" /><div><strong>{reasonLabel[item.reason] ?? item.reason}</strong><p>{sourceLabel[item.source] ?? item.source} · {item.event_type} · {item.confidence.toFixed(2)}</p><time dateTime={item.timestamp}>{dateTime(item.timestamp, data.timezone)}</time></div></div>)}{!data.events.some(item => item.table_id === selected) && <div className="empty-inline">Chưa có tín hiệu cho bàn này.<br />Dùng camera AI hoặc bộ phát mô phỏng để bắt đầu.</div>}</div><p className="footnote">Hiển thị tối đa 8 tín hiệu của bàn trong 30 sự kiện gần nhất. Không lưu hình ảnh cá nhân.</p></section>
           </aside></div>}
+          {tab === 'live' && (
+            <section className="live-camera-panel" style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '1.25rem' }}>
+              <div style={{ background: '#090d14', borderRadius: '8px', overflow: 'hidden', border: '1px solid #30363d', position: 'relative' }}>
+                <img
+                  src="/api/camera/stream"
+                  alt="Luồng Camera AI Trực tiếp"
+                  style={{ width: '100%', height: 'auto', display: 'block' }}
+                />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div className="detail-panel" style={{ padding: '1rem' }}>
+                  <div className="section-heading" style={{ marginBottom: '0.75rem' }}>
+                    <h2 style={{ fontSize: '1rem' }}>Trạng thái Camera AI</h2>
+                    <span className={`status ${data.camera_ready ? 'active' : 'closed'}`}>
+                      {data.camera_ready ? 'ĐANG CHẠY' : 'ĐANG DỪNG'}
+                    </span>
+                  </div>
+                  <dl className="system-grid" style={{ gridTemplateColumns: '1fr', gap: '0.4rem', fontSize: '0.85rem' }}>
+                    <div><dt>Trạng thái</dt><dd><b>{data.camera_status}</b></dd></div>
+                    <div><dt>Chế độ nguồn</dt><dd>{data.mode}</dd></div>
+                    <div><dt>Độ phân giải</dt><dd>960 × 540 (Chuẩn hóa)</dd></div>
+                    <div><dt>Mô hình AI</dt><dd>YOLOv8n ONNX (Người & Điểm đứng)</dd></div>
+                  </dl>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '1rem' }}>
+                    <button
+                      type="button"
+                      className="button primary"
+                      disabled={locked || data.camera_ready}
+                      onClick={() => void act(() => request('/camera/start', {}), 'Đã bật camera nhận diện trực tiếp.')}
+                    >
+                      Bật Camera
+                    </button>
+                    <button
+                      type="button"
+                      className="button subtle"
+                      disabled={locked || !data.camera_ready}
+                      onClick={() => void act(() => request('/camera/stop', {}), 'Đã dừng luồng camera.')}
+                    >
+                      Dừng Camera
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    className="button subtle full-width"
+                    style={{ marginTop: '0.5rem' }}
+                    onClick={() => setTab('calibration')}
+                  >
+                    Chuyển sang Hiệu chuẩn ROI ⛶
+                  </button>
+                </div>
+
+                <div className="detail-panel" style={{ padding: '1rem' }}>
+                  <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', color: '#8b949e', fontWeight: 600 }}>CHÚ GIẢI TRỰC QUAN</p>
+                  <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.8rem', color: '#c9d1d9', lineHeight: 1.6 }}>
+                    <li><strong style={{ color: '#10b981' }}>Khung xanh lá:</strong> Người chơi đã được gán vào bàn.</li>
+                    <li><strong style={{ color: '#f59e0b' }}>Khung cam / xám:</strong> Người đứng ngoài bàn hoặc vị trí tranh chấp (AMBIGUOUS).</li>
+                    <li><strong style={{ color: '#ef4444' }}>Chấm đỏ viền trắng:</strong> Điểm chân đứng (Foot Anchor) dùng để gán bàn.</li>
+                    <li><strong style={{ color: '#38bdf8' }}>Vùng viền bàn:</strong> Vùng mặt nỉ (Play) và vùng đứng đánh (Standing).</li>
+                  </ul>
+                </div>
+              </div>
+            </section>
+          )}
           {tab === 'history' && <section className="history-panel"><div className="section-heading"><h2>Phiên đã ghi nhận</h2><span className="outline-badge">25 phiên / trang</span></div>{historyLoading ? <p role="status">Đang tải lịch sử…</p> : <div className="history-scroll"><table><thead><tr><th>Bàn</th><th>Bắt đầu / kết thúc</th><th>Nguồn mở</th><th>Số phút tính phí</th><th>Tiền đã chốt</th><th>Trạng thái</th></tr></thead><tbody>{history.map(item => <tr key={item.id}><td><strong>Bàn {item.table_id.toString().padStart(2, '0')}</strong><small>{item.id.slice(0, 8)}</small></td><td>{dateTime(item.started_at, data.timezone)}<small>{dateTime(item.ended_at, data.timezone)}</small></td><td>{sourceLabel[item.trigger_source] ?? item.trigger_source}{item.evidence_source && <small>Bằng chứng mô phỏng</small>}</td><td>{item.ended_at ? item.billable_minutes : 'Đang chơi'}</td><td>{item.total_amount === null ? 'Chưa chốt' : money(item.total_amount)}</td><td><span className={`status ${item.status === 'ACTIVE' ? 'active' : 'closed'}`}>{item.status === 'ACTIVE' ? 'Đang chơi' : 'Đã thanh toán demo'}</span></td></tr>)}</tbody></table>{history.length === 0 && <p className="empty-inline">Chưa có phiên nào. Mở bàn trong trang Tổng quan để bắt đầu.</p>}</div>}<div className="pagination"><button className="button subtle" disabled={!historyPage || historyLoading} onClick={() => setHistoryPage(value => value - 1)}>Trang trước</button><span>Trang {historyPage + 1}</span><button className="button subtle" disabled={history.length < 25 || historyLoading} onClick={() => setHistoryPage(value => value + 1)}>Trang sau</button></div></section>}
           {tab === 'calibration' && <RoiEditor onSaved={() => setNotice('Cấu hình ROI đã được lưu và cập nhật.')} />}
           {tab === 'system' && <section className="system-panel"><div className="section-heading"><h2>Trạng thái triển khai Phase 2</h2><span className="outline-badge">OFFLINE READY</span></div><dl className="system-grid"><div><dt>Nguồn dữ liệu</dt><dd>{data.mode === 'SIMULATED' ? 'Sự kiện mô phỏng / nhân viên' : 'Nhân viên'}</dd></div><div><dt>Camera / tracking / ROI</dt><dd>Chưa triển khai · Phase 3</dd></div><div><dt>Nhận diện gậy</dt><dd>Chưa có model được kiểm chứng</dd></div><div><dt>Chính sách</dt><dd>{data.decision_config.policy}</dd></div><div><dt>Tự mở bàn demo</dt><dd>{data.auto_open_enabled ? 'Đã bật' : 'Đã tắt · yêu cầu nhân viên'}</dd></div><div><dt>Thời gian hiện diện</dt><dd>{data.decision_config.presence_seconds} giây</dd></div><div><dt>Confidence vào / giữ</dt><dd>{data.decision_config.confidence_enter} / {data.decision_config.confidence_exit}</dd></div><div><dt>Khoảng cách tín hiệu tối đa</dt><dd>{data.decision_config.max_observation_gap_seconds} giây</dd></div><div><dt>Khoảng vắng được làm mượt</dt><dd>{data.decision_config.absence_grace_seconds} giây</dd></div><div><dt>Cooldown sau chốt</dt><dd>{data.decision_config.cooldown_seconds} giây</dd></div><div><dt>Múi giờ hiển thị</dt><dd>{data.timezone}</dd></div><div><dt>Lưu trữ & đồng bộ</dt><dd>SQLite cục bộ · WebSocket</dd></div></dl><div className="message warning">Chỉnh ngưỡng tại configs/decision.toml, biến môi trường tại .env rồi khởi động lại API. Camera, vẽ polygon và hai chế độ REAL_CLUB / MINI_TABLE nằm ngoài Phase 2.</div></section>}

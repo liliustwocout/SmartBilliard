@@ -7,7 +7,7 @@ from typing import Callable
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse
@@ -21,6 +21,7 @@ from apps.api.config import ROOT, Settings
 from apps.api.models import Base, DetectionEvent, PlaySession, Table
 from apps.api.schemas import IngestionObservation, SimulatedObservation
 from services.vision.decision import Memory, Observation, advance
+from services.vision.annotator import create_standby_frame_jpeg
 from services.vision.calibration import CalibrationConfig, load_calibration_config, save_calibration_config
 from services.vision.mapper import TableObservationSummary
 from services.vision.preview import get_preview_frame_jpeg
@@ -347,6 +348,46 @@ def create_app(settings: Settings | None = None,
         changed()
         return {"success": True, "status": runner.status}
 
+    @app.get("/api/camera/stream")
+    async def camera_stream():
+        """MJPEG video stream with real-time detection bounding boxes, foot anchors, and ROI zones."""
+        async def frame_generator():
+            boundary = b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+            while True:
+                try:
+                    if runner and runner.is_running:
+                        frame_bytes = runner.get_annotated_frame_jpeg()
+                    else:
+                        frame_bytes = create_standby_frame_jpeg(
+                            message="CAMERA DANG TAT",
+                            sub_message="Nhan 'Bat Camera AI' de xem luong video truc tiep",
+                        )
+                    if frame_bytes:
+                        yield boundary + frame_bytes + b"\r\n"
+                    # Throttle stream output to ~10 FPS for local bandwidth/CPU efficiency
+                    await asyncio.sleep(0.1)
+                except asyncio.CancelledError:
+                    break
+                except Exception:
+                    await asyncio.sleep(0.5)
+
+        return StreamingResponse(
+            frame_generator(),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+
+    @app.get("/api/camera/frame")
+    async def camera_frame(annotated: bool = True):
+        """Get latest camera frame as a standalone JPEG (annotated or raw)."""
+        jpeg_bytes = None
+        if runner and runner.is_running:
+            jpeg_bytes = runner.get_annotated_frame_jpeg() if annotated else runner.get_latest_frame_jpeg()
+        if jpeg_bytes is None:
+            jpeg_bytes = create_standby_frame_jpeg()
+        return Response(content=jpeg_bytes, media_type="image/jpeg",
+                        headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
     @app.get("/api/calibration/zones")
     async def get_calibration_zones():
         zones_path = Path(settings.zones_config)
@@ -366,6 +407,8 @@ def create_app(settings: Settings | None = None,
         zones_path = Path(settings.zones_config)
         try:
             save_calibration_config(payload, zones_path)
+            if runner and runner.is_running:
+                runner.reload_calibration_config()
         except Exception as err:
             raise HTTPException(500, f"Không thể lưu cấu hình ROI: {err}")
         overlaps = payload.detect_overlaps()
