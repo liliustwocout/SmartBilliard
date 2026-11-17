@@ -7,6 +7,7 @@ from typing import Callable
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse
@@ -20,6 +21,8 @@ from apps.api.config import ROOT, Settings
 from apps.api.models import Base, DetectionEvent, PlaySession, Table
 from apps.api.schemas import SimulatedObservation
 from services.vision.decision import Memory, Observation, advance
+from services.vision.calibration import CalibrationConfig, load_calibration_config, save_calibration_config
+from services.vision.preview import get_preview_frame_jpeg
 
 
 def iso(value: datetime | None) -> str | None:
@@ -243,6 +246,43 @@ def create_app(settings: Settings | None = None,
                 db.commit()
             changed()
             return {**result, "duplicate": False}
+
+    @app.get("/api/calibration/zones")
+    async def get_calibration_zones():
+        zones_path = Path(settings.zones_config)
+        fallback = ROOT / "configs/zones.example.json"
+        try:
+            cfg = load_calibration_config(zones_path, fallback)
+        except Exception as err:
+            raise HTTPException(500, f"Không thể tải cấu hình ROI: {err}")
+        overlaps = cfg.detect_overlaps()
+        return {
+            "config": cfg.model_dump(),
+            "overlaps": [o.model_dump() for o in overlaps],
+        }
+
+    @app.post("/api/calibration/zones")
+    async def save_calibration_zones(payload: CalibrationConfig):
+        zones_path = Path(settings.zones_config)
+        try:
+            save_calibration_config(payload, zones_path)
+        except Exception as err:
+            raise HTTPException(500, f"Không thể lưu cấu hình ROI: {err}")
+        overlaps = payload.detect_overlaps()
+        return {
+            "config": payload.model_dump(),
+            "overlaps": [o.model_dump() for o in overlaps],
+            "message": "Đã lưu cấu hình ROI thành công",
+        }
+
+    @app.get("/api/calibration/preview")
+    async def get_calibration_preview():
+        try:
+            jpeg_bytes = get_preview_frame_jpeg(settings.camera_source, settings.camera_id)
+            return Response(content=jpeg_bytes, media_type="image/jpeg",
+                            headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+        except Exception as err:
+            raise HTTPException(500, f"Lỗi tạo ảnh preview: {err}")
 
     @app.websocket("/ws")
     async def websocket(socket: WebSocket):

@@ -243,3 +243,56 @@ def test_dong_rounding_free_rate_and_timezone_conversion():
     end = (start + timedelta(seconds=1)).astimezone(timezone(timedelta(hours=7)))
     assert quote(start, end, 1001)["amount_vnd"] == 17
     assert quote(start, end, 0)["amount_vnd"] == 0
+
+
+def test_calibration_api_endpoints(client, tmp_path):
+    client, _ = client
+
+    # Test GET preview
+    resp_preview = client.get("/api/calibration/preview")
+    assert resp_preview.status_code == 200
+    assert resp_preview.headers["content-type"] == "image/jpeg"
+    assert len(resp_preview.content) > 1000
+
+    # Test GET zones
+    resp_get = client.get("/api/calibration/zones")
+    assert resp_get.status_code == 200
+    data = resp_get.json()
+    assert "config" in data
+    assert "tables" in data["config"]
+
+    # Test POST valid zones
+    valid_payload = {
+        "camera_id": "cam-test-api",
+        "calibration_status": "CALIBRATED",
+        "coordinate_system": "normalized_xy_0_1",
+        "tables": [
+            {
+                "table_id": 1,
+                "enabled": True,
+                "play_polygon": [[0.1, 0.1], [0.3, 0.1], [0.3, 0.3], [0.1, 0.3]],
+                "standing_polygon": [[0.05, 0.05], [0.35, 0.05], [0.35, 0.35], [0.05, 0.35]],
+            }
+        ],
+    }
+    resp_post = client.post("/api/calibration/zones", json=valid_payload)
+    assert resp_post.status_code == 200
+    assert resp_post.json()["message"] == "Đã lưu cấu hình ROI thành công"
+
+    # Test POST invalid zones (self-intersecting)
+    invalid_payload = {
+        "camera_id": "cam-test-api",
+        "calibration_status": "CALIBRATED",
+        "coordinate_system": "normalized_xy_0_1",
+        "tables": [
+            {
+                "table_id": 1,
+                "enabled": True,
+                "play_polygon": [[0.1, 0.1], [0.4, 0.4], [0.4, 0.1], [0.1, 0.4]],
+                "standing_polygon": [[0.05, 0.05], [0.35, 0.05], [0.35, 0.35], [0.05, 0.35]],
+            }
+        ],
+    }
+    resp_post_invalid = client.post("/api/calibration/zones", json=invalid_payload)
+    assert resp_post_invalid.status_code == 422
+

@@ -26,3 +26,29 @@ export type Snapshot = {
 export type Observation = {
   event_id: string; table_id: number; present: boolean; confidence: number; ambiguous: boolean;
 };
+
+export type TableZoneConfig = {
+  table_id: number;
+  enabled: boolean;
+  play_polygon: [number, number][];
+  standing_polygon: [number, number][];
+};
+
+export type ZoneOverlapWarning = {
+  table_a: number;
+  table_b: number;
+  message: string;
+};
+
+export type CalibrationConfig = {
+  camera_id: string;
+  calibration_status: string;
+  coordinate_system: string;
+  tables: TableZoneConfig[];
+};
+
+export type CalibrationResponse = {
+  config: CalibrationConfig;
+  overlaps: ZoneOverlapWarning[];
+  message?: string;
+};

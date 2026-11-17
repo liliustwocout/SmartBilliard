@@ -25,6 +25,9 @@ class Settings:
     simulation_enabled: bool = True
     timezone: str = "Asia/Ho_Chi_Minh"
     decision: DecisionConfig = DecisionConfig()
+    camera_id: str = "cam-01"
+    camera_source: str = "0"
+    zones_config: str = str(ROOT / "configs/zones.json")
 
     def __post_init__(self):
         if not 1 <= self.table_count <= 8:
@@ -46,5 +49,9 @@ class Settings:
             hourly_rate=int(os.environ.get("HOURLY_RATE_VND", "60000")),
             auto_open=env_bool("AUTO_OPEN_ENABLED", False),
             simulation_enabled=env_bool("SIMULATION_ENABLED", True),
-            timezone=os.environ.get("DISPLAY_TIMEZONE", cls.timezone), decision=decision,
+            timezone=os.environ.get("DISPLAY_TIMEZONE", cls.timezone),
+            decision=decision,
+            camera_id=os.environ.get("CAMERA_ID", cls.camera_id),
+            camera_source=os.environ.get("CAMERA_SOURCE", cls.camera_source),
+            zones_config=os.environ.get("ZONES_CONFIG", str(ROOT / "configs/zones.json")),
         )

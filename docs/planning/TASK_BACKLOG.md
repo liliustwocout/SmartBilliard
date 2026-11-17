@@ -60,9 +60,9 @@ Theo dõi thực thi tại [GitHub issues và milestones](GITHUB_ISSUES.md). SB-
 
 ## SB-10 · ROI editor và calibration
 - Description: preview, vẽ/lưu play/standing polygon chuẩn hóa cho từng bàn.
-- Owner: Sơn + An. Priority: P0. Dependencies: SB-09.
+- Owner: An (Full-stack & Project Lead). Priority: P0. Dependencies: SB-09.
 - Acceptance Criteria: 4 bàn đúng camera/resolution, polygon hợp lệ, overlap báo ambiguity.
-- Status: TODO.
+- Status: DONE (Geometry validation: Shoelace area, self-intersection, point-in-polygon, overlap detection; FastAPI endpoints /api/calibration/zones and preview; React SVG/Canvas interactive ROI Editor).
 
 ## SB-11 · Person và tracker
 - Description: YOLO pretrained person, ByteTrack/BoT-SORT, bbox/confidence/time/camera/track ID.
