@@ -14,11 +14,21 @@ Base `http://127.0.0.1:8000`; JSON; OpenAPI máy đọc ở `/openapi.json`. `/d
 
 ### Camera và hiệu chuẩn (nhánh tích hợp thử nghiệm)
 
-- `GET /api/camera/status`: trạng thái nguồn, FPS vòng xử lý và `models.person`/`models.cue` với `name`, `loaded`, `backend`; cue có thêm `validated`. `loaded=true` chỉ xác nhận ONNX đã nạp, không chứng minh model chính xác trên camera. `fps` không phải FPS suy luận khi thiếu weights.
+- `GET /api/camera/status`: trạng thái nguồn, FPS vòng xử lý, `paused_tables` (bàn đang có phiên nên AI bỏ qua), `inference_paused` (true khi mọi bàn đã hiệu chuẩn đều đang có phiên và YOLO/tracker không chạy) và `models.person`/`models.cue` với `name`, `loaded`, `backend`; cue có thêm `validated`. `loaded=true` chỉ xác nhận ONNX đã nạp, không chứng minh model chính xác trên camera. `fps` không phải FPS suy luận khi thiếu weights.
 - `GET /api/dashboard` và `WS /ws`: thêm `model_status` cùng cấu trúc để UI không nhầm nguồn hình đã kết nối với nhận diện AI đang hoạt động.
 - `GET /api/camera/stream`: MJPEG có ROI/detection/HUD; `?annotated=false` trả khung hình gốc cho ROI editor. `GET /api/camera/frame?annotated=false` trả một JPEG gốc.
 - `GET /api/calibration/preview`: khung hình gốc để hiệu chỉnh. `GET/POST /api/calibration/zones`: đọc/lưu đa giác normalized `[0,1]`; POST nạp lại ROI cho runner đang chạy. Editor chỉ cập nhật màn trực tiếp sau khi lưu thành công.
 - `GET /api/videos`, `POST /api/videos/upload`, `POST /api/videos/activate`, `POST /api/videos/evaluate`, `POST /api/videos/generate-demo`, `POST /api/videos/extract-dataset`, `POST /api/videos/delete`: quản lý thư viện video cục bộ dưới `recordings`. `POST /api/videos/delete` nhận `{"filename": "..."}`, tự dừng runner và trả về nguồn camera mặc định nếu video đang phát Live rồi xoá file (trả 404 nếu không tìm thấy).
+
+### Cấu hình chỉnh trực tiếp (trang Hệ thống & camera)
+
+Có hiệu lực ngay, không cần khởi động lại. Giá trị ngưỡng, `auto_open` và `camera_source` lưu trong `data/runtime_settings.json` (gitignore, có thể chứa URL camera), nạp lại khi khởi động; không ghi đè `configs/decision.toml` hay `.env`. Với DB `:memory:` thì không lưu.
+
+- `GET /api/settings`: `decision`, `decision_defaults`, `auto_open`, `camera_source` (mật khẩu trong URL được che `***`), `camera_source_default`, `overridden` (các mục đang override), `persisted`.
+- `POST /api/settings`: cập nhật một phần `{"decision": {...}, "auto_open": bool, "confirm_auto_open": bool, "camera_source": str}`. Ngưỡng được kiểm tra bằng `DecisionConfig` (ví dụ `confidence_exit` > `confidence_enter` trả 422 và không đổi gì). Bật `auto_open` (chế độ **AI tự động mở bàn**, AI không bao giờ tự đóng phiên) bắt buộc `confirm_auto_open: true`, nếu không trả 422. Đổi `camera_source` khi runner đang chạy sẽ khởi động lại luồng.
+- `POST /api/settings/reset`: xóa override, về cấu hình từ file/env (kể cả nguồn camera).
+- `POST /api/tables/{id}/rate`: `{"hourly_rate": int}` VND 0..10.000.000. Phiên ACTIVE giữ `hourly_rate_snapshot` đã chốt lúc mở bàn. Bàn ngoài `TABLE_COUNT` trả 404.
+- Snapshot/`GET /api/tables` thêm `ai_paused` theo bàn: true khi bàn có phiên ACTIVE nên AI không phát quan sát cho bàn đó; thanh toán xong thì chạy lại.
 
 ```json
 {"event_id":"0b15a1be-e7b6-4aa8-8d7b-bf8af454c828","table_id":1,"present":true,"confidence":0.9,"ambiguous":false}

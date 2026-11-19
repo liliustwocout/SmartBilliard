@@ -1,5 +1,7 @@
 # Kế hoạch tổ chức lại giao diện web
 
+**Trạng thái: đã thực hiện** (tab Tổng quan chỉ còn lưới bàn và banner cảnh báo; tab Thử nghiệm, Hệ thống & camera đã tách thành `apps/web/src/views/`). Bổ sung ngoài kế hoạch gốc: banner "AI phát hiện đang đánh" với nút Xem camera / Xác nhận mở, tạm dừng AI cho bàn đã mở, chỉnh cấu hình trực tiếp và chế độ mở bàn (Người duyệt / AI tự động) ở trang Hệ thống & camera.
+
 Phạm vi: chỉ frontend (`apps/web/src`). Không đổi backend, API hay logic nghiệp vụ.
 
 ## 1. Vấn đề hiện tại
