@@ -22,3 +22,4 @@ models/*.onnx
 models/*.pt
 models/*.engine
 !models/README.md
+data/runtime_settings.json

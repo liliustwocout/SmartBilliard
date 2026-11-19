@@ -31,6 +31,7 @@ class Clock:
 def runtime(tmp_path):
     clock = Clock()
     settings = Settings(database_url=f"sqlite:///{tmp_path / 'test.db'}",
+                        zones_config=str(tmp_path / "zones.json"),
                         decision=DecisionConfig(presence_seconds=3))
     return settings, clock
 
@@ -62,6 +63,8 @@ def test_initial_dashboard_has_no_fabricated_sessions(client):
     assert len(data["tables"]) == 4 and data["active_count"] == 0
     assert data["revenue_vnd"] == 0 and data["mode"] == "SIMULATED"
     assert data["camera_ready"] is False and data["cue_detector_ready"] is False
+    assert data["model_status"]["person"]["loaded"] is False
+    assert data["model_status"]["cue"]["validated"] is False
 
 
 def test_simulation_to_staff_confirmation_checkout_and_history(client):
@@ -278,6 +281,7 @@ def test_calibration_api_endpoints(client, tmp_path):
     resp_post = client.post("/api/calibration/zones", json=valid_payload)
     assert resp_post.status_code == 200
     assert resp_post.json()["message"] == "Đã lưu cấu hình ROI thành công"
+    assert (tmp_path / "zones.json").is_file()
 
     # Test POST invalid zones (self-intersecting)
     invalid_payload = {
@@ -343,6 +347,8 @@ def test_camera_controls_status_and_lifecycle(client):
     status_data = resp_status.json()
     assert "status" in status_data
     assert "running" in status_data
+    assert status_data["models"]["person"]["loaded"] is False
+    assert status_data["models"]["cue"]["validated"] is False
 
     # Stop camera
     resp_stop = client.post("/api/camera/stop")
@@ -359,4 +365,268 @@ def test_camera_frame_endpoint(client):
     assert resp.content.startswith(b"\xff\xd8")
 
 
+def test_two_table_pos_unbilled_play_alert_and_backdate_open(tmp_path):
+    clock = Clock()
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'pos2.db'}",
+        table_count=2,
+        decision=DecisionConfig(
+            policy="POSE_AND_CUE",
+            presence_seconds=3,
+            max_observation_gap_seconds=10,
+            absence_grace_seconds=6,
+            playing_hold_grace_seconds=25,
+            unbilled_alert_seconds=300,
+        ),
+    )
+    with TestClient(create_app(settings, clock), base_url="http://127.0.0.1") as client:
+        dash = client.get("/api/dashboard").json()
+        assert len(dash["tables"]) == 2
+        assert dash["unbilled_alerts"] == []
 
+        # Spectator standing around table 2 does NOT trigger playing or alert
+        for _ in range(10):
+            observe(client, table_id=2, activity_state="NOT_PLAYING")
+            clock.tick(1)
+        dash = client.get("/api/dashboard").json()
+        assert dash["tables"][1]["ai_activity"] == "NOT_PLAYING"
+        assert dash["tables"][1]["unbilled_alert"] is False
+
+        # Player actively plays on table 1 for > 5 minutes (305s) without POS open
+        for _ in range(62):
+            res, _ = observe(client, table_id=1, activity_state="PLAYING")
+            clock.tick(5)
+
+        assert res["unbilled_alert"] is True
+        assert res["reason"] == "UNBILLED_PLAY_OVER_5M"
+
+        dash = client.get("/api/dashboard").json()
+        t1 = dash["tables"][0]
+        assert t1["ai_activity"] == "PLAYING"
+        assert t1["unbilled_alert"] is True
+        assert t1["unbilled_playing_seconds"] >= 300
+        assert len(dash["unbilled_alerts"]) == 1
+
+        # Open table backdated to AI start time -> clears alert and records session duration
+        opened = client.post("/api/tables/1/open?backdate_to_ai=true").json()
+        assert opened["status"] == "ACTIVE"
+        assert opened["billable_minutes"] >= 5
+        dash_after = client.get("/api/dashboard").json()
+        assert dash_after["unbilled_alerts"] == []
+        assert dash_after["tables"][0]["unbilled_alert"] is False
+
+
+def test_web_video_upload_automation_and_dataset_extract(tmp_path):
+    import cv2
+    import numpy as np
+
+    clock = Clock()
+    settings = Settings(database_url=f"sqlite:///{tmp_path / 'video_web.db'}", table_count=2)
+
+    # Create a small synthetic 2-second MP4 clip in memory/disk to upload
+    src_mp4 = tmp_path / "client_clip.mp4"
+    writer = cv2.VideoWriter(str(src_mp4), cv2.VideoWriter_fourcc(*"mp4v"), 6.0, (320, 240))
+    for i in range(12):
+        frame = np.zeros((240, 320, 3), dtype=np.uint8)
+        cv2.rectangle(frame, (15 + i * 10, 40), (75 + i * 10, 120), (60, 190, 90), -1)
+        writer.write(frame)
+    writer.release()
+    mp4_bytes = src_mp4.read_bytes()
+
+    with TestClient(create_app(settings, clock), base_url="http://127.0.0.1") as client:
+        # 1. Reject empty or unsupported upload
+        assert client.post("/api/videos/upload?filename=bad.txt", content=b"hello").status_code == 400
+        assert client.post("/api/videos/upload?filename=empty.mp4", content=b"").status_code == 400
+
+        # 2. Upload MP4 -> auto-activates CameraRunner + runs fast-forward evaluation
+        up = client.post(
+            "/api/videos/upload?filename=match_test.mp4&auto_start=true&auto_evaluate=true",
+            content=mp4_bytes,
+        )
+        assert up.status_code == 200, up.text
+        up_data = up.json()
+        assert up_data["filename"] == "match_test.mp4"
+        assert up_data["size_bytes"] == len(mp4_bytes)
+        assert up_data["live_started"] is True
+        assert up_data["evaluation"]["processed_frames"] >= 10
+
+        # 3. Video list shows active video
+        listing = client.get("/api/videos").json()
+        assert any(v["filename"] == "match_test.mp4" and v["active"] for v in listing["videos"])
+
+        # 4. Calibration preview renders frame from uploaded video
+        preview = client.get("/api/calibration/preview")
+        assert preview.status_code == 200 and preview.content.startswith(b"\xff\xd8")
+
+        # 5. Extract training dataset frames from uploaded video via web endpoint
+        ext = client.post("/api/videos/extract-dataset", json={"filename": "match_test.mp4", "interval": 0.5})
+        assert ext.status_code == 200, ext.text
+        assert ext.json()["total_images"] >= 2
+
+        # 6. 1-click generate demo video + activate + evaluate
+        demo = client.post("/api/videos/generate-demo", json={"duration_seconds": 2.5})
+        assert demo.status_code == 200, demo.text
+        demo_data = demo.json()
+        assert demo_data["filename"] == "demo_auto.mp4"
+        assert demo_data["live_started"] is True
+        assert demo_data["evaluation"]["processed_frames"] >= 10
+
+        # 7. Switch back to match_test.mp4 & stop cleanly
+        act = client.post("/api/videos/activate", json={"filename": "match_test.mp4"})
+        assert act.status_code == 200 and act.json()["success"] is True
+        del_demo = client.post("/api/videos/delete", json={"filename": "demo_auto.mp4"})
+        assert del_demo.status_code == 200
+        assert del_demo.json() == {"deleted": True, "filename": "demo_auto.mp4", "stopped_live": False}
+
+        del_active = client.post("/api/videos/delete", json={"filename": "match_test.mp4"})
+        assert del_active.status_code == 200
+        assert del_active.json() == {"deleted": True, "filename": "match_test.mp4", "stopped_live": True}
+        assert client.get("/api/camera/status").json()["running"] is False
+        assert client.get("/api/videos").json()["videos"] == []
+        assert client.post("/api/videos/delete", json={"filename": "match_test.mp4"}).status_code == 404
+        assert client.post("/api/videos/delete", json={"filename": "../secret.mp4"}).status_code == 404
+
+
+
+
+
+def test_ai_pauses_for_tables_with_open_session_and_resumes_after_checkout(client):
+    client, clock = client
+    app_runner = client.app.state.runner
+    assert app_runner.paused_tables == frozenset()
+
+    session = open_table(client, 1)
+    assert app_runner.paused_tables == frozenset({1})
+    tables = {t["id"]: t for t in client.get("/api/tables").json()}
+    assert tables[1]["ai_paused"] is True and tables[2]["ai_paused"] is False
+    assert client.get("/api/camera/status").json()["paused_tables"] == [1]
+
+    open_table(client, 2)
+    assert app_runner.paused_tables == frozenset({1, 2})
+
+    clock.tick(60)
+    assert client.post(f"/api/sessions/{session['id']}/checkout").status_code == 200
+    assert app_runner.paused_tables == frozenset({2})
+    assert {t["id"]: t["ai_paused"] for t in client.get("/api/tables").json()}[1] is False
+
+
+def test_auto_open_pauses_ai_for_that_table(runtime):
+    settings, clock = runtime
+    with TestClient(create_app(replace(settings, auto_open=True), clock), base_url="http://127.0.0.1") as client:
+        for _ in range(6):
+            observe(client)
+            clock.tick()
+        assert client.app.state.runner.paused_tables == frozenset({1})
+
+
+def test_restart_restores_paused_tables_from_active_sessions(runtime):
+    settings, clock = runtime
+    with TestClient(create_app(settings, clock), base_url="http://127.0.0.1") as first:
+        open_table(first, 1)
+    with TestClient(create_app(settings, clock), base_url="http://127.0.0.1") as second:
+        assert second.app.state.runner.paused_tables == frozenset({1})
+
+
+def test_threshold_edit_applies_immediately_persists_and_resets(runtime):
+    settings, clock = runtime
+    with TestClient(create_app(settings, clock), base_url="http://127.0.0.1") as client:
+        view = client.get("/api/settings").json()
+        assert view["decision"]["presence_seconds"] == 3 and view["overridden"] == []
+        res = client.post("/api/settings", json={"decision": {"presence_seconds": 20, "cooldown_seconds": 5}})
+        assert res.status_code == 200, res.text
+        assert res.json()["decision"]["presence_seconds"] == 20 and res.json()["overridden"] == ["decision"]
+        assert client.get("/api/dashboard").json()["decision_config"]["presence_seconds"] == 20
+    # Same database dir -> override survives a restart
+    with TestClient(create_app(settings, clock), base_url="http://127.0.0.1") as client:
+        assert client.get("/api/settings").json()["decision"]["cooldown_seconds"] == 5
+        res = client.post("/api/settings/reset")
+        assert res.json()["decision"]["presence_seconds"] == 3 and res.json()["overridden"] == []
+    with TestClient(create_app(settings, clock), base_url="http://127.0.0.1") as client:
+        assert client.get("/api/settings").json()["decision"]["presence_seconds"] == 3
+
+
+def test_invalid_thresholds_are_rejected_without_changing_anything(client):
+    client, _ = client
+    before = client.get("/api/settings").json()["decision"]
+    for bad in ({"confidence_enter": .4, "confidence_exit": .6}, {"presence_seconds": 0},
+                {"cooldown_seconds": 99999}, {"nope": 1}):
+        assert client.post("/api/settings", json={"decision": bad}).status_code == 422
+    assert client.get("/api/settings").json()["decision"] == before
+    assert client.get("/api/settings").json()["overridden"] == []
+
+
+def test_auto_open_requires_explicit_confirmation(client):
+    client, _ = client
+    assert client.post("/api/settings", json={"auto_open": True}).status_code == 422
+    assert client.get("/api/dashboard").json()["auto_open_enabled"] is False
+    res = client.post("/api/settings", json={"auto_open": True, "confirm_auto_open": True})
+    assert res.status_code == 200 and res.json()["auto_open"] is True
+    assert client.get("/api/dashboard").json()["auto_open_enabled"] is True
+    assert client.post("/api/settings", json={"auto_open": False}).json()["auto_open"] is False
+
+
+def test_camera_source_edit_masks_credentials_and_keeps_runner_stopped(client):
+    client, _ = client
+    res = client.post("/api/settings", json={"camera_source": "rtsp://admin:secret@10.0.0.5/stream"})
+    assert res.status_code == 200
+    assert "secret" not in res.text and "admin:***" in res.json()["camera_source"]
+    assert client.get("/api/camera/status").json()["running"] is False
+    assert client.post("/api/settings", json={"camera_source": ""}).status_code == 422
+
+
+def test_table_rate_edit_does_not_change_open_session_price(client):
+    client, clock = client
+    session = open_table(client, 1)
+    assert client.post("/api/tables/1/rate", json={"hourly_rate": 90000}).status_code == 200
+    tables = {t["id"]: t for t in client.get("/api/tables").json()}
+    assert tables[1]["hourly_rate"] == 90000 and tables[1]["session"]["hourly_rate_snapshot"] == 60000
+    assert tables[2]["hourly_rate"] == 60000
+    for bad in (-1, 10_000_001):
+        assert client.post("/api/tables/1/rate", json={"hourly_rate": bad}).status_code == 422
+    assert client.post("/api/tables/99/rate", json={"hourly_rate": 1}).status_code == 404
+    assert session["hourly_rate_snapshot"] == 60000
+
+
+def test_multi_table_roi_calibration_snapshot_status_and_overlaps(tmp_path):
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'roi_multi.db'}",
+        table_count=4,
+        zones_config=str(tmp_path / "zones.json"),
+    )
+    with TestClient(create_app(settings, Clock()), base_url="http://127.0.0.1") as client:
+        multi_payload = {
+            "camera_id": "cam-multi",
+            "calibration_status": "CALIBRATED",
+            "coordinate_system": "normalized_xy_0_1",
+            "tables": [
+                {
+                    "table_id": 1,
+                    "enabled": True,
+                    "play_polygon": [[0.1, 0.1], [0.3, 0.1], [0.3, 0.3], [0.1, 0.3]],
+                    "standing_polygon": [[0.05, 0.05], [0.45, 0.05], [0.45, 0.4], [0.05, 0.4]],
+                },
+                {
+                    "table_id": 2,
+                    "enabled": True,
+                    "play_polygon": [[0.42, 0.1], [0.62, 0.1], [0.62, 0.3], [0.42, 0.3]],
+                    "standing_polygon": [[0.35, 0.05], [0.7, 0.05], [0.7, 0.4], [0.35, 0.4]],
+                },
+                {
+                    "table_id": 3,
+                    "enabled": False,
+                    "play_polygon": [[0.72, 0.1], [0.9, 0.1], [0.9, 0.3], [0.72, 0.3]],
+                    "standing_polygon": [[0.68, 0.05], [0.95, 0.05], [0.95, 0.4], [0.68, 0.4]],
+                },
+            ],
+        }
+        save_res = client.post("/api/calibration/zones", json=multi_payload)
+        assert save_res.status_code == 200, save_res.text
+        overlaps = save_res.json()["overlaps"]
+        assert len(overlaps) == 1
+        assert {overlaps[0]["table_a"], overlaps[0]["table_b"]} == {1, 2}
+
+        dash_tables = {t["id"]: t for t in client.get("/api/dashboard").json()["tables"]}
+        assert dash_tables[1]["roi_calibrated"] is True and dash_tables[1]["roi_enabled"] is True
+        assert dash_tables[2]["roi_calibrated"] is True and dash_tables[2]["roi_enabled"] is True
+        assert dash_tables[3]["roi_calibrated"] is True and dash_tables[3]["roi_enabled"] is False
+        assert dash_tables[4]["roi_calibrated"] is False and dash_tables[4]["roi_enabled"] is False
