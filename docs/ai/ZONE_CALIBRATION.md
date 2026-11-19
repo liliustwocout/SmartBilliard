@@ -1,6 +1,6 @@
 # Hiệu chuẩn nhiều bàn
 
-`configs/zones.example.json` chỉ minh họa cấu trúc normalized_xy_0_1 cho bốn bàn, chưa dùng bởi runtime Phase 2. Không coi các polygon đó đúng cho camera thật.
+`configs/zones.example.json` chỉ minh họa cấu trúc normalized_xy_0_1 cho bốn bàn, là cấu hình mẫu/fallback khi chưa có `configs/zones.json`. ROI editor lưu vùng thực tế vào `configs/zones.json` (đã hiệu chuẩn theo từng camera). Không coi các polygon đó đúng cho camera thật.
 
 1. Cố định camera, độ phân giải, lens/zoom và mode; chụp frame tham chiếu được phép.
 2. Vẽ polygon mặt chơi và polygon vùng đứng quanh bàn riêng cho mỗi table_id; x/W, y/H trong [0,1]. Standing zone không chỉ là mặt nỉ.
@@ -10,4 +10,4 @@
 6. Đi thử quanh từng bàn, giữa hai bàn, che khuất, nhiều người và vùng xa; ghi ground truth/assignment theo track và thời gian.
 7. Đổi camera/góc/zoom phải hiệu chuẩn lại. Nâng resolution không khôi phục được góc bị che.
 
-ROI editor/preview/overlay và zone mapper là SB-10/SB-12, chưa triển khai. Calibration checklist này không thay bằng chứng test video thực.
+ROI editor, preview, overlay và zone mapper đã có (tab Hiệu chuẩn ROI). Điểm chân người được gán bàn theo vùng đứng; ROI chỉ là một lớp lọc, phân biệt người chơi/người xem còn dựa vào phân tích tư thế và gậy. Calibration checklist này không thay bằng chứng test video thực.
