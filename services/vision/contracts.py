@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 SourceStatus = Literal["CONNECTED", "CONNECTING", "DISCONNECTED", "ERROR", "EOF", "CLOSED"]
+ActivityState = Literal["PLAYING", "NOT_PLAYING", "UNKNOWN"]
+Keypoint = tuple[float, float, float]
 
 
 @dataclass(frozen=True)
@@ -14,6 +16,8 @@ class Detection:
     confidence: float
     track_id: int | None = None
     foot_anchor: tuple[float, float] | None = None
+    keypoints: tuple[Keypoint, ...] | None = None
+    cue_angle_deg: float | None = None
 
 
 class CueDetector(Protocol):

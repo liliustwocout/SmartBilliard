@@ -94,7 +94,64 @@ def test_validated_cue_contract_can_be_integrated_later():
 
 
 @pytest.mark.parametrize("values", [{"confidence_exit": .9}, {"presence_seconds": 0},
-                                      {"cooldown_seconds": -1}, {"policy": "UNKNOWN"}])
+                                      {"cooldown_seconds": -1}, {"policy": "UNKNOWN"},
+                                      {"unbilled_alert_seconds": 0}])
 def test_invalid_thresholds_fail_early(values):
     with pytest.raises(ValidationError):
         DecisionConfig(**values)
+
+
+def test_spectator_and_cleaning_not_playing_posture_never_confirms():
+    config = DecisionConfig(presence_seconds=3, policy="POSE_AND_CUE")
+    memory = Memory()
+    spectator_obs = Observation(present=True, confidence=0.95, activity_state="NOT_PLAYING")
+    for now in range(15):
+        res = advance(memory, spectator_obs, float(now), config)
+        memory = res.memory
+        assert res.reason == "NOT_PLAYING_POSTURE"
+        assert memory.state == "EMPTY"
+        assert memory.playing_since is None
+        assert not memory.unbilled_alert
+
+
+def test_pose_and_cue_policy_requires_playing_and_fires_unbilled_5m_alert():
+    config = DecisionConfig(
+        policy="POSE_AND_CUE",
+        presence_seconds=3,
+        max_observation_gap_seconds=5,
+        playing_hold_grace_seconds=25,
+        unbilled_alert_seconds=300,
+    )
+    memory = Memory()
+    playing = Observation(present=True, confidence=0.9, activity_state="PLAYING")
+    standing_between_shots = Observation(present=True, confidence=0.9, activity_state="NOT_PLAYING")
+
+    # Confirm initial playing after 3s
+    for now in (0.0, 1.0, 2.0, 3.0):
+        res = advance(memory, playing, now, config)
+        memory = res.memory
+    assert memory.state == "NEEDS_CONFIRMATION"
+    assert memory.playing_since == 0.0
+    assert not memory.unbilled_alert
+
+    # Player stands upright for 8s between shots (< 25s grace) -> playing_since preserved
+    for now in (5.0, 8.0, 11.0):
+        res = advance(memory, standing_between_shots, now, config)
+        memory = res.memory
+        assert memory.playing_since == 0.0
+
+    # Resume strokes past 300s (5 minutes) without POS opening table -> alert fires
+    t = 15.0
+    while t <= 300.0:
+        res = advance(memory, playing, t, config)
+        memory = res.memory
+        t += 4.0
+    res = advance(memory, playing, 301.0, config)
+    assert res.reason == "UNBILLED_PLAY_OVER_5M"
+    assert res.memory.unbilled_alert is True
+
+    # Staff opens table on POS -> alert clears
+    opened = advance(res.memory, playing, 302.0, config, active=True)
+    assert opened.memory.state == "ACTIVE"
+    assert opened.memory.unbilled_alert is False
+    assert opened.memory.playing_since is None

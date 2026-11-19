@@ -127,3 +127,43 @@ def test_ambiguity_invariant_with_temporal_fsm(sample_calibration: CalibrationCo
         assert decision.should_open is False
         assert decision.reason == "AMBIGUOUS"
         assert memory.state == "EMPTY"
+
+
+def test_disabled_table_emits_no_observations_and_does_not_cause_ambiguity():
+    cfg = CalibrationConfig(
+        camera_id="cam-test",
+        calibration_status="CALIBRATED",
+        coordinate_system="normalized_xy_0_1",
+        tables=[
+            TableZone(
+                table_id=1,
+                enabled=True,
+                play_polygon=[[0.1, 0.1], [0.35, 0.1], [0.35, 0.4], [0.1, 0.4]],
+                standing_polygon=[[0.05, 0.05], [0.5, 0.05], [0.5, 0.45], [0.05, 0.45]],
+            ),
+            TableZone(
+                table_id=2,
+                enabled=False,
+                play_polygon=[[0.45, 0.1], [0.85, 0.1], [0.85, 0.4], [0.45, 0.4]],
+                standing_polygon=[[0.4, 0.05], [0.95, 0.05], [0.95, 0.45], [0.4, 0.45]],
+            ),
+        ],
+    )
+    mapper = TableZoneMapper(cfg)
+
+    # Person standing in the overlap region of T1 (enabled) and T2 (disabled) -> only T1 assigned
+    det_overlap = PersonDetection(bbox=(0.42, 0.1, 0.48, 0.25), confidence=0.9, foot_anchor=(0.45, 0.25), track_id=1)
+    # Person standing solely inside T2 (disabled) -> OUTSIDE
+    det_t2_only = PersonDetection(bbox=(0.7, 0.1, 0.8, 0.25), confidence=0.9, foot_anchor=(0.75, 0.25), track_id=2)
+
+    assign_overlap = mapper.map_person(det_overlap)
+    assert assign_overlap.status == "ASSIGNED"
+    assert assign_overlap.matched_tables == [1]
+
+    assign_t2 = mapper.map_person(det_t2_only)
+    assert assign_t2.status == "OUTSIDE"
+
+    _, summaries = mapper.map_frame([det_overlap, det_t2_only])
+    assert 1 in summaries
+    assert 2 not in summaries
+    assert summaries[1].ambiguous is False

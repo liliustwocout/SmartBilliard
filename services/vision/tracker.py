@@ -47,6 +47,7 @@ class STrack:
     bbox: tuple[float, float, float, float]
     confidence: float
     foot_anchor: tuple[float, float]
+    keypoints: tuple[tuple[float, float, float], ...] | None = None
     state: Literal["NEW", "TRACKED", "LOST", "REMOVED"] = "NEW"
     age: int = 0
     time_since_update: int = 0
@@ -66,7 +67,11 @@ class STrack:
         )
         self.bbox = smooth_box
         self.confidence = det.confidence
-        self.foot_anchor = ((smooth_box[0] + smooth_box[2]) / 2.0, smooth_box[3])
+        self.keypoints = det.keypoints
+        if det.keypoints is not None:
+            self.foot_anchor = det.foot_anchor
+        else:
+            self.foot_anchor = ((smooth_box[0] + smooth_box[2]) / 2.0, smooth_box[3])
         self.state = "TRACKED"
         self.time_since_update = 0
         self.hits += 1
@@ -98,6 +103,12 @@ class ByteTracker:
         self._next_id: int = 1
         self.tracked_stracks: list[STrack] = []
         self.lost_stracks: list[STrack] = []
+
+    def reset(self) -> None:
+        """Drop all tracks, e.g. after inference was paused and old tracks are stale."""
+        self._next_id = 1
+        self.tracked_stracks = []
+        self.lost_stracks = []
 
     def _match_tracks(
         self,
@@ -187,6 +198,7 @@ class ByteTracker:
                 bbox=det.bbox,
                 confidence=det.confidence,
                 foot_anchor=det.foot_anchor,
+                keypoints=det.keypoints,
                 state="TRACKED",
             )
             self._next_id += 1
@@ -216,6 +228,7 @@ class ByteTracker:
                     foot_anchor=track.foot_anchor,
                     class_id=0,
                     track_id=track.track_id,
+                    keypoints=track.keypoints,
                 )
             )
         return output

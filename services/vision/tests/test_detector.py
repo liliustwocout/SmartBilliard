@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 import pytest
 
-from services.vision.detector import PersonDetection, YoloPersonDetector, letterbox
+from services.vision.detector import PersonDetection, YoloCueDetector, YoloPersonDetector, letterbox
 
 
 def test_letterbox_resizing_and_aspect_ratio():
@@ -24,6 +24,13 @@ def test_detector_empty_or_none_frame():
     detector = YoloPersonDetector(model_path="models/yolov8n.onnx")
     assert detector.detect(None) == []
     assert detector.detect(np.array([], dtype=np.uint8)) == []
+
+
+def test_loaded_cue_weights_do_not_claim_validation():
+    detector = object.__new__(YoloCueDetector)
+    detector._net = object()
+    assert detector.is_ready is True
+    assert detector.validated is False
 
 
 def test_detector_with_real_onnx_model():

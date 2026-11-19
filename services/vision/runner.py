@@ -20,7 +20,7 @@ import numpy as np
 from services.vision.adapters import FileVideoSource, RTSPCameraSource, USBCameraSource, create_video_source
 from services.vision.calibration import CalibrationConfig, load_calibration_config
 from services.vision.contracts import Detection, VideoSource
-from services.vision.detector import YoloPersonDetector
+from services.vision.detector import YoloCueDetector, YoloPoseDetector
 from services.vision.mapper import TableObservationSummary, TableZoneMapper
 from services.vision.pipeline import VisionPipeline
 from services.vision.tracker import ByteTracker
@@ -28,6 +28,15 @@ from services.vision.tracker import ByteTracker
 logger = logging.getLogger("smartbilliard.vision.runner")
 
 ObservationCallback = Callable[[int, TableObservationSummary, str], None]
+
+
+def _infer_source_type(source: str | int) -> str:
+    source_str = str(source).strip().lower()
+    if isinstance(source, int) or source_str.isdigit():
+        return "CAMERA"
+    if source_str.startswith(("rtsp://", "rtsps://", "http://", "https://")):
+        return "CAMERA"
+    return "VIDEO"
 
 
 class CameraRunner:
@@ -40,7 +49,10 @@ class CameraRunner:
         camera_id: str = "cam-01",
         zones_config_path: str | Path = "configs/zones.json",
         fallback_zones_path: str | Path = "configs/zones.example.json",
-        model_path: str | Path = "models/yolov8n.onnx",
+        model_path: str | Path = "models/yolov8n-pose.onnx",
+        fallback_model_path: str | Path = "models/yolov8n.onnx",
+        cue_model_path: str | Path = "models/yolov8n-cue.onnx",
+        prefer_gpu: bool = True,
         target_fps: float = 8.0,
         on_observation: ObservationCallback | None = None,
     ) -> None:
@@ -49,6 +61,9 @@ class CameraRunner:
         self.zones_config_path = Path(zones_config_path)
         self.fallback_zones_path = Path(fallback_zones_path)
         self.model_path = Path(model_path)
+        self.fallback_model_path = Path(fallback_model_path)
+        self.cue_model_path = Path(cue_model_path)
+        self.prefer_gpu = prefer_gpu
         self.target_fps = target_fps
         self.on_observation = on_observation
 
@@ -57,14 +72,7 @@ class CameraRunner:
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
 
-        # Determine source type label
-        source_str = str(source).strip().lower()
-        if source_str.isdigit() or isinstance(source, int):
-            self.source_type = "CAMERA"
-        elif source_str.startswith(("rtsp://", "rtsps://", "http://", "https://")):
-            self.source_type = "CAMERA"
-        else:
-            self.source_type = "VIDEO"
+        self.source_type = _infer_source_type(source)
 
         self._status: str = "STOPPED"
         self._last_processed_time: float = 0.0
@@ -73,6 +81,23 @@ class CameraRunner:
         self._latest_summaries: dict[int, TableObservationSummary] = {}
         self._fps_measured: float = 0.0
         self._calibration_cfg: CalibrationConfig | None = None
+        self._paused_tables: frozenset[int] = frozenset()
+
+    def set_paused_tables(self, table_ids: set[int] | frozenset[int]) -> None:
+        """Tables with an open session: no observations are emitted for them, and the models
+        are not run at all while every calibrated table is paused."""
+        with self._lock:
+            self._paused_tables = frozenset(int(t) for t in table_ids)
+
+    @property
+    def paused_tables(self) -> frozenset[int]:
+        with self._lock:
+            return self._paused_tables
+
+    @property
+    def inference_paused(self) -> bool:
+        with self._lock:
+            return bool(self._pipeline and self._pipeline.inference_skipped)
 
     @property
     def is_running(self) -> bool:
@@ -90,6 +115,32 @@ class CameraRunner:
     @property
     def measured_fps(self) -> float:
         return self._fps_measured
+
+    @property
+    def cue_detector_ready(self) -> bool:
+        with self._lock:
+            if self._pipeline and self._pipeline.cue_detector:
+                return bool(getattr(self._pipeline.cue_detector, "validated", False))
+            return False
+
+    def get_model_status(self) -> dict[str, dict[str, str | bool]]:
+        """Report models actually loaded by the active pipeline, not files on disk."""
+        with self._lock:
+            person = self._pipeline.detector if self._pipeline else None
+            cue = self._pipeline.cue_detector if self._pipeline else None
+            return {
+                "person": {
+                    "name": Path(person.model_path).name if person else self.model_path.name,
+                    "loaded": bool(person and person.is_ready),
+                    "backend": str(getattr(person, "backend_label", "OFFLINE")),
+                },
+                "cue": {
+                    "name": Path(cue.model_path).name if cue else self.cue_model_path.name,
+                    "loaded": bool(cue and cue.is_ready),
+                    "backend": str(getattr(cue, "backend_label", "OFFLINE")),
+                    "validated": bool(cue and getattr(cue, "validated", False)),
+                },
+            }
 
     def get_latest_frame(self) -> np.ndarray | None:
         with self._lock:
@@ -162,8 +213,16 @@ class CameraRunner:
                 self._calibration_cfg = calibration_cfg
                 mapper = TableZoneMapper(calibration_cfg)
 
-                # 3. Initialize detector & tracker
-                detector = YoloPersonDetector(model_path=self.model_path)
+                # 3. Initialize pose + cue detectors & tracker
+                detector = YoloPoseDetector(
+                    model_path=self.model_path,
+                    fallback_model_path=self.fallback_model_path,
+                    prefer_gpu=self.prefer_gpu,
+                )
+                cue_detector = YoloCueDetector(
+                    model_path=self.cue_model_path,
+                    prefer_gpu=self.prefer_gpu,
+                )
                 tracker = ByteTracker()
 
                 # 4. Assemble pipeline
@@ -172,6 +231,7 @@ class CameraRunner:
                     detector=detector,
                     tracker=tracker,
                     mapper=mapper,
+                    cue_detector=cue_detector,
                 )
             except Exception as err:
                 logger.error("Failed to initialize VisionPipeline: %s", err)
@@ -201,6 +261,27 @@ class CameraRunner:
             self._status = "STOPPED"
             logger.info("CameraRunner stopped")
 
+    def configure_source(self, new_source: str | int) -> bool:
+        """Change the source; restart only if the runner is currently running."""
+        if self.is_running:
+            return self.switch_source(new_source)
+        with self._lock:
+            self.source_spec = str(new_source)
+            self.source_type = _infer_source_type(new_source)
+        return True
+
+    def switch_source(self, new_source: str | int) -> bool:
+        """Stop current capture, switch video/camera source, and restart pipeline."""
+        self.stop()
+        with self._lock:
+            self.source_spec = str(new_source)
+            self.source_type = _infer_source_type(new_source)
+            self._latest_frame = None
+            self._latest_detections = []
+            self._latest_summaries = {}
+            self._fps_measured = 0.0
+        return self.start()
+
     def _run_loop(self) -> None:
         """Main loop running in background thread."""
         interval = 1.0 / max(1.0, self.target_fps)
@@ -212,7 +293,10 @@ class CameraRunner:
 
             try:
                 if self._pipeline is not None:
-                    ok, frame, detections, summaries = self._pipeline.process_frame_for_tables(timestamp=now_ts)
+                    paused = self.paused_tables
+                    ok, frame, detections, summaries = self._pipeline.process_frame_for_tables(
+                        timestamp=now_ts, paused_table_ids=paused)
+                    summaries = {tid: item for tid, item in summaries.items() if tid not in paused}
                     with self._lock:
                         if ok and frame is not None:
                             self._latest_frame = frame

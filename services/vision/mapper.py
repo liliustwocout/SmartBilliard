@@ -9,13 +9,15 @@ Maps person foot anchors to table standing zones:
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from services.vision.calibration import CalibrationConfig, Point, TableZone, load_calibration_config, point_in_polygon
-from services.vision.contracts import Detection
+from services.vision.contracts import ActivityState, Detection
 from services.vision.decision import Observation
+from services.vision.pose_analyzer import PoseCueAnalyzer
 
 logger = logging.getLogger("smartbilliard.vision.mapper")
 
@@ -38,6 +40,8 @@ class TableObservationSummary:
     people_count: int = 0
     track_ids: list[int] = field(default_factory=list)
     cue_confidence: float | None = None
+    activity_state: ActivityState = "UNKNOWN"
+    activity_reason: str = "WAITING"
 
     def to_observation(self) -> Observation:
         """Convert to the Decision Engine's Observation contract."""
@@ -46,14 +50,16 @@ class TableObservationSummary:
             confidence=self.confidence,
             ambiguous=self.ambiguous,
             cue_confidence=self.cue_confidence,
+            activity_state=self.activity_state,
         )
 
 
 class TableZoneMapper:
-    """Maps detected persons to billiard tables based on calibration zones."""
+    """Maps detected persons and cues to billiard tables based on calibration zones."""
 
-    def __init__(self, config: CalibrationConfig) -> None:
+    def __init__(self, config: CalibrationConfig, analyzer: PoseCueAnalyzer | None = None) -> None:
         self.config = config
+        self.analyzer = analyzer or PoseCueAnalyzer()
 
     @classmethod
     def from_file(cls, path: str | Path, fallback: str | Path | None = None) -> TableZoneMapper:
@@ -100,9 +106,20 @@ class TableZoneMapper:
             track_id=track_id,
         )
 
-    def map_frame(self, detections: list[Any]) -> tuple[list[PersonAssignment], dict[int, TableObservationSummary]]:
+    def map_frame(
+        self,
+        detections: list[Any],
+        timestamp: float | None = None,
+    ) -> tuple[list[PersonAssignment], dict[int, TableObservationSummary]]:
         """Map all detections in a frame to tables and return per-table observation summaries."""
-        assignments: list[PersonAssignment] = [self.map_person(d) for d in detections]
+        person_detections = [d for d in detections if getattr(d, "kind", "person") == "person"]
+        cue_detections = [d for d in detections if getattr(d, "kind", None) == "cue"]
+
+        ts = timestamp
+        if ts is None:
+            ts = next((float(d.timestamp) for d in detections if hasattr(d, "timestamp")), time.time())
+
+        assignments: list[PersonAssignment] = [self.map_person(d) for d in person_detections]
 
         # Group assignments by table
         table_unambiguous: dict[int, list[PersonAssignment]] = {t.table_id: [] for t in self.config.tables}
@@ -120,9 +137,14 @@ class TableZoneMapper:
 
         summaries: dict[int, TableObservationSummary] = {}
         for table in self.config.tables:
+            if not table.enabled:
+                continue
             tid = table.table_id
             unambig_list = table_unambiguous.get(tid, [])
             ambig_list = table_ambiguous.get(tid, [])
+            activity_state, cue_conf, activity_reason = self.analyzer.analyze_table(
+                table, unambig_list, ambig_list, cue_detections, ts
+            )
 
             if unambig_list:
                 # We have at least one person clearly at this table
@@ -135,6 +157,9 @@ class TableZoneMapper:
                     ambiguous=False,
                     people_count=len(unambig_list),
                     track_ids=track_ids,
+                    cue_confidence=cue_conf,
+                    activity_state=activity_state,
+                    activity_reason=activity_reason,
                 )
             elif ambig_list:
                 # Only ambiguous people on border
@@ -147,6 +172,9 @@ class TableZoneMapper:
                     ambiguous=True,
                     people_count=len(ambig_list),
                     track_ids=track_ids,
+                    cue_confidence=cue_conf,
+                    activity_state=activity_state,
+                    activity_reason=activity_reason,
                 )
             else:
                 # No people at this table
@@ -157,6 +185,9 @@ class TableZoneMapper:
                     ambiguous=False,
                     people_count=0,
                     track_ids=[],
+                    cue_confidence=None,
+                    activity_state="NOT_PLAYING",
+                    activity_reason="EMPTY_TABLE",
                 )
 
         return assignments, summaries
