@@ -8,6 +8,13 @@ export function duration(seconds: number): string {
     .map(part => String(part).padStart(2, '0')).join(':');
 }
 
+export function minuteSecond(seconds: number): string {
+  const value = Math.max(0, Math.floor(seconds));
+  const mins = Math.floor(value / 60);
+  const secs = value % 60;
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
 export function dateTime(value: string | null, timezone: string): string {
   return value ? new Intl.DateTimeFormat('vi-VN', {
     timeZone: timezone, dateStyle: 'short', timeStyle: 'medium',
@@ -17,6 +24,11 @@ export function dateTime(value: string | null, timezone: string): string {
 export const statusLabel: Record<string, string> = {
   EMPTY: 'Sẵn sàng', CANDIDATE: 'Đang quan sát', ACTIVE: 'Đang chơi',
   NEEDS_CONFIRMATION: 'Chờ xác nhận', CLOSED: 'Đã chốt phiên',
+};
+export const activityLabel: Record<string, string> = {
+  PLAYING: 'Đang đánh',
+  NOT_PLAYING: 'Không chơi',
+  UNKNOWN: 'Chưa rõ',
 };
 export const sourceLabel: Record<string, string> = {
   STAFF: 'Nhân viên', STAFF_CONFIRMATION: 'Nhân viên xác nhận', SIMULATED: 'Mô phỏng',
@@ -28,4 +40,6 @@ export const reasonLabel: Record<string, string> = {
   NO_RELIABLE_PRESENCE: 'Không đủ bằng chứng hiện diện', PRESENCE_PENDING: 'Đang tích lũy thời gian hiện diện',
   CUE_NOT_READY: 'Chưa có detector gậy được kiểm chứng', STAFF_REQUIRED: 'Cần nhân viên xác nhận',
   CONTROLLED_DEMO: 'Mở tự động trong demo mô phỏng',
+  NOT_PLAYING_POSTURE: 'Đứng xem hoặc lau bàn (không tính chơi)',
+  UNBILLED_PLAY_OVER_5M: 'Cảnh báo: chơi quá 5 phút chưa mở bàn',
 };

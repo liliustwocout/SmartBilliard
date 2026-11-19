@@ -1,16 +1,39 @@
 import { useEffect, useState } from 'react';
 import type { Snapshot } from './types';
 
-export async function request<T>(path: string, body?: unknown): Promise<T> {
+export async function request<T>(path: string, body?: unknown, timeoutMs = 8000): Promise<T> {
   const response = await fetch(`/api${path}`, {
     method: body === undefined ? 'GET' : 'POST',
     headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(8000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
     throw new Error(typeof error.detail === 'string' ? error.detail : `Yêu cầu thất bại (${response.status})`);
+  }
+  return response.json() as Promise<T>;
+}
+
+export async function uploadVideoFile<T>(
+  file: File,
+  options: { autoStart?: boolean; autoEvaluate?: boolean } = {},
+  timeoutMs = 300000,
+): Promise<T> {
+  const params = new URLSearchParams({
+    filename: file.name || 'upload.mp4',
+    auto_start: String(options.autoStart ?? true),
+    auto_evaluate: String(options.autoEvaluate ?? true),
+  });
+  const response = await fetch(`/api/videos/upload?${params.toString()}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: file,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(typeof error.detail === 'string' ? error.detail : `Tải video thất bại (${response.status})`);
   }
   return response.json() as Promise<T>;
 }

@@ -7,3 +7,5 @@ max_observation_gap_seconds = 2.5
 absence_grace_seconds = 3.0
 cooldown_seconds = 15.0
 cue_confidence = 0.8
+unbilled_alert_seconds = 300.0
+playing_hold_grace_seconds = 25.0

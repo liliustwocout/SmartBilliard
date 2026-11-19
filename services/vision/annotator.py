@@ -9,8 +9,39 @@ import cv2
 import numpy as np
 
 from services.vision.calibration import CalibrationConfig, TableZone
-from services.vision.contracts import Detection
+from services.vision.contracts import Detection, Keypoint
 from services.vision.mapper import TableObservationSummary
+
+_POSE_EDGES = (
+    (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),
+    (5, 11), (6, 12), (11, 12),
+    (11, 13), (13, 15), (12, 14), (14, 16),
+)
+
+
+def _draw_skeleton(
+    annotated: np.ndarray,
+    keypoints: tuple[Keypoint, ...] | None,
+    width: int,
+    height: int,
+    color: tuple[int, int, int],
+    min_conf: float = 0.35,
+) -> None:
+    if not keypoints or len(keypoints) < 17:
+        return
+    pts: dict[int, tuple[int, int]] = {}
+    for idx, (kx, ky, kconf) in enumerate(keypoints):
+        if kconf >= min_conf:
+            pts[idx] = (
+                max(0, min(width - 1, int(kx * width))),
+                max(0, min(height - 1, int(ky * height))),
+            )
+    for a, b in _POSE_EDGES:
+        if a in pts and b in pts:
+            cv2.line(annotated, pts[a], pts[b], color, 2, cv2.LINE_AA)
+    for idx, pt in pts.items():
+        joint_color = (0, 230, 255) if idx in (9, 10) else (255, 255, 255)
+        cv2.circle(annotated, pt, 4 if idx in (9, 10) else 3, joint_color, -1, cv2.LINE_AA)
 
 
 def draw_frame_annotations(
@@ -57,26 +88,33 @@ def draw_frame_annotations(
     # 1. Draw Table Zones (Play & Standing polygons)
     if config and config.tables:
         for table in config.tables:
-            is_active = table.table_id in active_tables
+            is_active = table.enabled and table.table_id in active_tables
 
-            # 1a. Standing zone (Amber / Orange)
+            # 1a. Standing zone (Amber / Orange, muted gray when disabled)
             if len(table.standing_polygon) >= 3:
                 stand_pts = np.array(
                     [[int(x * width), int(y * height)] for x, y in table.standing_polygon],
                     dtype=np.int32,
                 )
-                stand_color = (15, 175, 245) if is_active else (25, 130, 190)  # BGR
+                if not table.enabled:
+                    stand_color = (120, 125, 130)
+                else:
+                    stand_color = (15, 175, 245) if is_active else (25, 130, 190)  # BGR
                 cv2.fillPoly(overlay, [stand_pts], stand_color)
                 cv2.polylines(annotated, [stand_pts], isClosed=True, color=stand_color, thickness=1, lineType=cv2.LINE_AA)
 
-            # 1b. Play zone (Emerald Green)
+            # 1b. Play zone (Emerald Green, muted gray when disabled)
             if len(table.play_polygon) >= 3:
                 play_pts = np.array(
                     [[int(x * width), int(y * height)] for x, y in table.play_polygon],
                     dtype=np.int32,
                 )
-                play_fill = (45, 180, 50) if is_active else (35, 120, 35)  # BGR
-                play_border = (80, 230, 90) if is_active else (55, 170, 60)
+                if not table.enabled:
+                    play_fill = (95, 100, 105)
+                    play_border = (135, 140, 145)
+                else:
+                    play_fill = (45, 180, 50) if is_active else (35, 120, 35)  # BGR
+                    play_border = (80, 230, 90) if is_active else (55, 170, 60)
                 cv2.fillPoly(overlay, [play_pts], play_fill)
                 cv2.polylines(annotated, [play_pts], isClosed=True, color=play_border, thickness=2, lineType=cv2.LINE_AA)
 
@@ -84,7 +122,22 @@ def draw_frame_annotations(
                 cx = int(np.mean(play_pts[:, 0]))
                 cy = int(np.mean(play_pts[:, 1]))
                 status_text = f"BAN {table.table_id:02}"
-                sub_text = "CO NGUOI" if is_active else "TRONG"
+                table_summary = summaries.get(table.table_id) if summaries else None
+                if not table.enabled:
+                    sub_text = "TAM TAT"
+                    label_color = (170, 175, 180)
+                elif table_summary and table_summary.activity_state == "PLAYING":
+                    sub_text = "DANG CHOI"
+                    label_color = (100, 255, 120)
+                elif table_summary and table_summary.present and table_summary.activity_state == "NOT_PLAYING":
+                    sub_text = "KHONG CHOI"
+                    label_color = (255, 210, 120)
+                elif is_active:
+                    sub_text = "CHUA RO"
+                    label_color = (240, 200, 100)
+                else:
+                    sub_text = "TRONG"
+                    label_color = (220, 220, 220)
 
                 # Background badge for table label
                 (tw, th), _ = cv2.getTextSize(status_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
@@ -94,10 +147,9 @@ def draw_frame_annotations(
                 badge_y2 = min(height - 1, cy + 14)
                 cv2.rectangle(overlay, (badge_x1, badge_y1), (badge_x2, badge_y2), (18, 18, 22), -1)
 
-                label_color = (100, 255, 120) if is_active else (220, 220, 220)
                 cv2.putText(annotated, status_text, (cx - tw // 2, cy - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.48, label_color, 1, cv2.LINE_AA)
                 (stw, sth), _ = cv2.getTextSize(sub_text, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)
-                cv2.putText(annotated, sub_text, (cx - stw // 2, cy + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (170, 170, 170), 1, cv2.LINE_AA)
+                cv2.putText(annotated, sub_text, (cx - stw // 2, cy + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 210, 205), 1, cv2.LINE_AA)
 
         # Blend semi-transparent polygon fills (alpha = 0.22)
         cv2.addWeighted(overlay, 0.22, annotated, 0.78, 0, annotated)
@@ -109,6 +161,8 @@ def draw_frame_annotations(
             for trk in summary.track_ids:
                 track_to_table[trk] = tid
 
+    person_count = 0
+    cue_count = 0
     if detections:
         for det in detections:
             x1 = max(0, min(width - 1, int(det.bbox[0] * width)))
@@ -116,6 +170,18 @@ def draw_frame_annotations(
             x2 = max(0, min(width - 1, int(det.bbox[2] * width)))
             y2 = max(0, min(height - 1, int(det.bbox[3] * height)))
 
+            if det.kind == "cue":
+                cue_count += 1
+                cue_color = (0, 215, 255)
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), cue_color, 2, cv2.LINE_AA)
+                cue_label = f"Gay [{int(det.confidence * 100)}%]"
+                (lw, lh), _ = cv2.getTextSize(cue_label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+                lbl_y1 = max(0, y1 - lh - 6)
+                cv2.rectangle(annotated, (x1, lbl_y1), (min(width - 1, x1 + lw + 8), y1), (15, 15, 20), -1)
+                cv2.putText(annotated, cue_label, (x1 + 4, max(lh + 2, y1 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, cue_color, 1, cv2.LINE_AA)
+                continue
+
+            person_count += 1
             tid = track_to_table.get(det.track_id) if det.track_id is not None else None
 
             # Color coding: Green for assigned table, Orange for ambiguous/outside
@@ -127,8 +193,9 @@ def draw_frame_annotations(
                 trk_label = f"ID #{det.track_id}" if det.track_id is not None else "Person"
                 tag_label = f"{trk_label} (Ngoai)"
 
-            # Bounding box
+            # Bounding box & Pose Skeleton
             cv2.rectangle(annotated, (x1, y1), (x2, y2), box_color, 2, cv2.LINE_AA)
+            _draw_skeleton(annotated, getattr(det, "keypoints", None), width, height, box_color)
 
             # Foot Anchor point (cx, y2)
             if det.foot_anchor:
@@ -167,9 +234,8 @@ def draw_frame_annotations(
     dot_color = (0, 240, 100) if source_type == "CAMERA" else (240, 180, 40)
     cv2.circle(annotated, (16, 14), 5, dot_color, -1, cv2.LINE_AA)
 
-    det_count = len(detections) if detections else 0
     act_count = len(active_tables)
-    hud_text = f"LIVE {source_type} ({camera_id}) | FPS: {fps:.1f} | Nguoi: {det_count} | Ban co khach: {act_count}"
+    hud_text = f"LIVE {source_type} ({camera_id}) | FPS: {fps:.1f} | Nguoi: {person_count} | Gay: {cue_count} | Ban hoat dong: {act_count}"
     cv2.putText(annotated, hud_text, (28, 19), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (230, 235, 240), 1, cv2.LINE_AA)
 
     # Right HUD clock hint

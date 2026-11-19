@@ -4,13 +4,21 @@ Base `http://127.0.0.1:8000`; JSON; OpenAPI máy đọc ở `/openapi.json`. `/d
 
 - `GET /api/health`: status=ok, phase=2, camera_ready=false.
 - `GET /api/dashboard`: full snapshot với server_time, timezone, mode, capabilities, config, tables, events, active_count, revenue_vnd, running_amount_vnd.
-- `GET /api/tables`: danh sách cùng định dạng tables trong snapshot.
+- `GET /api/tables`: danh sách cùng định dạng tables trong snapshot (kèm `roi_calibrated`, `roi_enabled` từ cấu hình ROI hiện hành).
 - `POST /api/tables/{id}/open`: không cần body; tạo STAFF hoặc STAFF_CONFIRMATION, trả session. Nếu đang ACTIVE trả session cũ. Nhân viên được bypass cooldown vì đây là quyết định thủ công.
 - `GET /api/sessions?limit=100&offset=0`: mới nhất trước; limit 1..500. Trả cả ACTIVE/PAID, không có tổng count.
 - `GET /api/sessions/{id}/quote`: session và quote tại thời gian backend; phiên PAID dùng thời điểm ended_at nên tiền ổn định.
 - `POST /api/sessions/{id}/checkout`: chốt tiền và thời điểm; lặp trả hóa đơn cũ. Đây là ghi nhận thanh toán demo, không kết nối tiền thật.
 - `POST /api/simulations/observations`: body dưới đây. Chỉ nhận source SIMULATED cố định; không nhận timestamp hoặc source client. Cờ mô phỏng tắt trả 403.
 - `WS /ws`: gửi snapshot ngay sau connect, sau thay đổi và khoảng 1 giây. Client không phải gửi message. Reconnect nhận snapshot mới đầy đủ.
+
+### Camera và hiệu chuẩn (nhánh tích hợp thử nghiệm)
+
+- `GET /api/camera/status`: trạng thái nguồn, FPS vòng xử lý và `models.person`/`models.cue` với `name`, `loaded`, `backend`; cue có thêm `validated`. `loaded=true` chỉ xác nhận ONNX đã nạp, không chứng minh model chính xác trên camera. `fps` không phải FPS suy luận khi thiếu weights.
+- `GET /api/dashboard` và `WS /ws`: thêm `model_status` cùng cấu trúc để UI không nhầm nguồn hình đã kết nối với nhận diện AI đang hoạt động.
+- `GET /api/camera/stream`: MJPEG có ROI/detection/HUD; `?annotated=false` trả khung hình gốc cho ROI editor. `GET /api/camera/frame?annotated=false` trả một JPEG gốc.
+- `GET /api/calibration/preview`: khung hình gốc để hiệu chỉnh. `GET/POST /api/calibration/zones`: đọc/lưu đa giác normalized `[0,1]`; POST nạp lại ROI cho runner đang chạy. Editor chỉ cập nhật màn trực tiếp sau khi lưu thành công.
+- `GET /api/videos`, `POST /api/videos/upload`, `POST /api/videos/activate`, `POST /api/videos/evaluate`, `POST /api/videos/generate-demo`, `POST /api/videos/extract-dataset`, `POST /api/videos/delete`: quản lý thư viện video cục bộ dưới `recordings`. `POST /api/videos/delete` nhận `{"filename": "..."}`, tự dừng runner và trả về nguồn camera mặc định nếu video đang phát Live rồi xoá file (trả 404 nếu không tìm thấy).
 
 ```json
 {"event_id":"0b15a1be-e7b6-4aa8-8d7b-bf8af454c828","table_id":1,"present":true,"confidence":0.9,"ambiguous":false}

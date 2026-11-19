@@ -77,15 +77,17 @@ Phát tín hiệu bằng CLI (API phải đang chạy):
 .\.venv\Scripts\python.exe scripts/simulate.py --table 1 --seconds 12
 ```
 
-## Camera / AI: chưa chạy trong Phase 2
+## Camera / AI: tích hợp thử nghiệm, chưa nghiệm thu model
 
-`CAMERA_ID`, `CAMERA_SOURCE`, `VISION_MODE` trong `.env.example` là hợp đồng chuẩn bị, **chưa được đọc bởi camera adapter**. Chưa có lệnh chạy AI vì reader, YOLO, tracker, zone mapper và hand adapter chưa triển khai. Không cần cài Ultralytics/OpenCV trước Phase 3. `configs/zones.example.json` chỉ là ROI minh họa; phải vẽ lại trên khung hình thực.
+Nhánh hiện tại có nguồn video/camera, ROI editor, overlay, tracker và đường nạp YOLO ONNX qua OpenCV DNN. `CAMERA_ENABLED` mặc định tắt; `models/` hiện chưa có weights ONNX nên camera có hình chỉ hiển thị khung hình và ROI, **không có nhận diện người/gậy**. `GET /api/camera/status` và dashboard trả trạng thái model thực tế (`loaded`, `backend`); FPS của vòng đọc hình không chứng minh inference. Khi có weights, code thử CUDA FP16 nếu OpenCV hỗ trợ, còn không dùng CPU. Chưa có benchmark/kiểm chứng thực địa để kết luận độ chính xác hoặc bật tính tiền tự động. `configs/zones.example.json` là ROI minh họa; phải vẽ lại trên khung hình thực và bấm **Lưu cấu hình ROI** thì màn Camera trực tiếp mới dùng vùng mới.
+
+**Tiết kiệm tính toán và cảnh báo xác nhận.** Bàn đã có phiên ACTIVE (mở thủ công, xác nhận hoặc tự mở demo) bị tạm dừng nhận diện: runner không phát quan sát cho bàn đó, và khi *mọi* bàn trong ROI đều đang có phiên thì pipeline vẫn đọc khung hình (để xem live) nhưng bỏ qua YOLO và tracker. Thanh toán xong, bàn trống lại và nhận diện chạy lại (tracker được reset). Mô hình chạy trên toàn khung hình nên khi chỉ một phần bàn có phiên, YOLO vẫn chạy cho các bàn còn lại. `GET /api/tables`/snapshot có thêm `ai_paused` theo bàn; `GET /api/camera/status` có thêm `paused_tables` và `inference_paused`. Khi AI thấy đang đánh và bàn chưa mở (`NEEDS_CONFIRMATION`), Tổng quan hiện banner với nút **Xem camera** và **Xác nhận mở**; AI không tự đóng phiên.
 
 PERSON_AND_CUE luôn yêu cầu kiểm tra thủ công ở Phase 2 kể cả có confidence gậy từ mô phỏng. COCO person detector không phải cue detector. MINI_TABLE không chứng minh khả năng phát hiện người thật.
 
 ## Giới hạn và an toàn dữ liệu
 
-Chưa có login, phân quyền, audit nhân viên hoặc gateway thanh toán. Chỉ bind loopback trên laptop demo, không triển khai mạng công cộng. POST và WebSocket kiểm tra browser Origin; Host chỉ chấp nhận localhost/127.0.0.1. Không có secrets mặc định. Lịch sử là hóa đơn **demo**, không xác nhận tiền đã chuyển ngoài đời. Không có video/ảnh được lưu.
+Chưa có login, phân quyền, audit nhân viên hoặc gateway thanh toán. Chỉ bind loopback trên laptop demo, không triển khai mạng công cộng. POST và WebSocket kiểm tra browser Origin; Host chỉ chấp nhận localhost/127.0.0.1. Không có secrets mặc định. Lịch sử là hóa đơn **demo**, không xác nhận tiền đã chuyển ngoài đời. Video do người dùng tải lên trong nhánh thử nghiệm được lưu cục bộ dưới thư mục `recordings` cạnh database; không được dùng làm bằng chứng model đã đạt yêu cầu nếu thiếu nhãn và phép đo.
 
 SQLite/FSM/WebSocket hiện phục vụ một process; scale nhiều worker cần thiết kế lại đồng bộ. Dashboard chỉ nhận 30 detection events mới nhất; lịch sử session có phân trang. Event log tăng theo số tín hiệu; ngừng bộ phát khi không demo, chưa có retention tự động. Backup file `data/smartbilliard.db` **khi đã dừng API** trước khi thay đổi schema; chưa có migration tự động cho database cũ. Không tự xóa DB để sửa lỗi.
 
@@ -96,3 +98,14 @@ Chưa đo precision/recall, FPS, độ trễ camera, CPU/RAM hoặc khả năng 
 Repository: [liliustwocout/SmartBilliard](https://github.com/liliustwocout/SmartBilliard). Xem [issue và milestone](docs/planning/GITHUB_ISSUES.md) để nhận việc tiếp theo. Người phụ trách trong issue là đề xuất theo kế hoạch; chưa gán GitHub assignee khi chưa có mapping tài khoản thành viên.
 
 GitHub Actions chạy Pytest, Vitest, production build và HTTP/WS smoke trên Ubuntu và Windows khi mở PR vào main hoặc cập nhật main. CI dùng dữ liệu nhân tạo; không thay thế kiểm chứng camera. Hồ sơ đăng ký có thông tin cá nhân chỉ giữ local, không public trên GitHub.
+
+## Chỉnh cấu hình trực tiếp (trang Hệ thống & camera)
+
+Có hiệu lực ngay, không cần khởi động lại. Giá trị ngưỡng, tự mở bàn và nguồn camera lưu trong `data/runtime_settings.json` (gitignore; có thể chứa URL camera) và được nạp lại khi khởi động; không ghi đè `configs/decision.toml` hay `.env`. Giá giờ từng bàn lưu trong SQLite; phiên đang chạy giữ giá đã chốt.
+
+| Endpoint | Mô tả |
+|---|---|
+| `GET /api/settings` | Ngưỡng hiện tại, mặc định, tự mở bàn, nguồn camera (mật khẩu được ẩn), danh sách mục đang override |
+| `POST /api/settings` | Cập nhật một phần: `decision{...}`, `auto_open` (bật cần `confirm_auto_open: true`), `camera_source`. Ngưỡng sai (ví dụ confidence_exit > confidence_enter) trả 422, không đổi gì |
+| `POST /api/settings/reset` | Xóa override, về cấu hình mặc định |
+| `POST /api/tables/{id}/rate` | `{hourly_rate}` VND nguyên 0..10.000.000 |
