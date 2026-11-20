@@ -24,3 +24,4 @@ models/*.engine
 !models/README.md
 data/runtime_settings.json
 configs/zones.backup-*.json
+data/label_packs/

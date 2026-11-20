@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gán nhãn hành động</title>
+<style>
+  :root { --bg:#f3f6f4; --card:#fff; --text:#1c2a22; --muted:#5d6d63; --border:#d5ded8; --green:#1a8a52; --amber:#b45309; --red:#b91c1c; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#14201a; --card:#1c2a22; --text:#e8efea; --muted:#9fb2a6; --border:#2f4237; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:"Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--text); font-size:16px; }
+  main { max-width:960px; margin:0 auto; padding:16px; }
+  h1 { font-size:22px; margin:0 0 4px; } p { margin:0 0 10px; line-height:1.5; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; margin-bottom:14px; }
+  .muted { color:var(--muted); font-size:14px; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+  input[type=text] { font:inherit; padding:10px 12px; border:1px solid var(--border); border-radius:8px; min-width:240px; background:var(--card); color:var(--text); }
+  button { font:inherit; cursor:pointer; border-radius:8px; border:1px solid var(--border); background:var(--card); color:var(--text); padding:10px 14px; }
+  button.primary { background:var(--green); border-color:var(--green); color:#fff; font-weight:600; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .stage { display:grid; place-items:center; background:#1b1f1d; border-radius:10px; padding:10px; }
+  canvas { width:min(100%,448px); aspect-ratio:1; background:#282828; border-radius:6px; image-rendering:auto; }
+  .bar { height:10px; background:var(--border); border-radius:6px; overflow:hidden; } .bar > i { display:block; height:100%; background:var(--green); width:0; }
+  .labels { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px; margin-top:12px; }
+  .labels button { padding:16px 12px; font-size:18px; font-weight:600; text-align:left; }
+  .labels button small { display:block; font-weight:400; font-size:13px; color:var(--muted); margin-top:4px; }
+  .labels button kbd { background:var(--bg); border:1px solid var(--border); border-radius:4px; padding:0 6px; margin-right:6px; }
+  .labels button.chosen { outline:3px solid var(--green); }
+  .help dt { font-weight:600; margin-top:8px; } .help dd { margin:2px 0 0; color:var(--muted); }
+  .warn { color:var(--amber); }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Gán nhãn hành động</h1>
+  <p class="muted">Mỗi clip dài khoảng 3 giây, chỉ nhìn người có khung màu xanh lơ. Khuôn mặt đã được làm mờ. Chọn nhãn mô tả đúng nhất hành động của người đó.</p>
+
+  <section id="start" class="card">
+    <p><b>Tên của bạn</b> (để nhóm biết ai gán nhãn):</p>
+    <div class="row">
+      <input id="name" type="text" placeholder="Ví dụ: Lan" autocomplete="off">
+      <button id="begin" class="primary">Bắt đầu</button>
+      <label class="muted">Tiếp tục từ file tiến độ cũ: <input id="import" type="file" accept=".json"></label>
+    </div>
+    <p class="muted warn" id="storageWarn"></p>
+    <details class="help card" open style="margin-top:12px">
+      <summary><b>Đọc kỹ cách chọn nhãn (cả nhóm cần hiểu giống nhau)</b></summary>
+      <dl id="helpList"></dl>
+    </details>
+  </section>
+
+  <section id="work" class="hidden">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <b id="progressText"></b>
+        <span class="muted" id="who"></span>
+      </div>
+      <div class="bar" style="margin-top:8px"><i id="progressBar"></i></div>
+    </div>
+    <div class="card">
+      <div class="stage"><canvas id="view" width="448" height="448" aria-label="Clip cần gán nhãn"></canvas></div>
+      <div class="row" style="margin-top:10px">
+        <button id="play">Tạm dừng (Cách)</button>
+        <button id="slow">Chậm 0.5×</button>
+        <button id="back">← Quay lại clip trước</button>
+        <button id="skip">Bỏ qua clip này</button>
+      </div>
+      <div class="labels" id="labels"></div>
+      <p class="muted" style="margin-top:10px">Phím tắt: 1–6 chọn nhãn, Cách để dừng/phát, ← quay lại. Chọn nhãn xong sẽ tự sang clip tiếp.</p>
+    </div>
+    <div class="card row">
+      <button id="save" class="primary">Lưu kết quả (tải file)</button>
+      <span class="muted" id="saveHint">Nhớ bấm Lưu thường xuyên và gửi file cho người phụ trách khi xong.</span>
+    </div>
+  </section>
+
+  <section id="done" class="card hidden">
+    <h2>Đã gán xong!</h2>
+    <p>Bấm nút bên dưới để tải file kết quả, rồi gửi file đó cho người phụ trách nhóm.</p>
+    <div class="row"><button id="save2" class="primary">Lưu kết quả (tải file)</button><button id="review">Xem lại từ đầu</button></div>
+  </section>
+</main>
+<script>
+"use strict";
+const PACK = /*__PACK_JSON__*/null;
+const FORMAT = "smartbilliard-labels-v1";
+const KEYS = PACK ? PACK.labels.map((l, i) => String(i + 1)) : [];
+const DISPLAY = { SHOOTING:"Đang đánh", AIMING:"Đang ngắm", WATCHING:"Đứng xem", WALKING:"Đi lại", UNSURE:"Không chắc", INVALID:"Clip lỗi" };
+
+const $ = id => document.getElementById(id);
+let state = { name:"", labels:{}, index:0 };
+let anim = null, frame = 0, playing = true, slow = false, img = null;
+const storageKey = PACK ? `labels:${PACK.batch}:${PACK.member_id}` : "";
+
+function safeStorage(fn) { try { return fn(); } catch (e) { return null; } }
+function save() { safeStorage(() => localStorage.setItem(storageKey, JSON.stringify(state))); }
+
+function buildHelp() {
+  $("helpList").innerHTML = PACK.labels.map(l => `<dt>${DISPLAY[l.id] || l.id}</dt><dd>${l.help}</dd>`).join("");
+  $("labels").innerHTML = PACK.labels.map((l, i) =>
+    `<button data-label="${l.id}"><kbd>${i + 1}</kbd>${DISPLAY[l.id] || l.id}<small>${l.help}</small></button>`).join("");
+  $("labels").querySelectorAll("button").forEach(b => b.addEventListener("click", () => choose(b.dataset.label)));
+}
+
+function firstUnlabeled() {
+  const i = PACK.clips.findIndex(c => !state.labels[c.id]);
+  return i === -1 ? PACK.clips.length : i;
+}
+
+function show() {
+  clearInterval(anim);
+  const total = PACK.clips.length, done = Object.keys(state.labels).length;
+  $("progressText").textContent = `Đã gán ${done}/${total} clip`;
+  $("progressBar").style.width = (total ? done / total * 100 : 0) + "%";
+  $("who").textContent = state.name;
+  if (state.index >= total) { $("work").classList.add("hidden"); $("done").classList.remove("hidden"); return; }
+  $("done").classList.add("hidden"); $("work").classList.remove("hidden");
+  const clip = PACK.clips[state.index];
+  const chosen = state.labels[clip.id] && state.labels[clip.id].label;
+  document.querySelectorAll("#labels button").forEach(b => b.classList.toggle("chosen", b.dataset.label === chosen));
+  $("back").disabled = state.index === 0;
+  img = new Image();
+  img.onload = () => { frame = 0; play(clip); };
+  img.onerror = () => { $("progressText").textContent = "Không tải được clip " + clip.id + ". Kiểm tra thư mục clips."; };
+  img.src = clip.sprite;
+}
+
+function draw(clip) {
+  const cv = $("view"), ctx = cv.getContext("2d");
+  const r = Math.floor(frame / clip.cols), c = frame % clip.cols;
+  ctx.drawImage(img, c * clip.tile, r * clip.tile, clip.tile, clip.tile, 0, 0, cv.width, cv.height);
+}
+
+function play(clip) {
+  clearInterval(anim);
+  draw(clip);
+  const delay = 1000 / (clip.fps || 8) / (slow ? 0.5 : 1);
+  anim = setInterval(() => { if (!playing) return; frame = (frame + 1) % clip.n; draw(clip); }, delay);
+}
+
+function choose(label) {
+  if (state.index >= PACK.clips.length) return;
+  const clip = PACK.clips[state.index];
+  state.labels[clip.id] = { label, ts: new Date().toISOString() };
+  state.index = firstUnlabeledAfter(state.index);
+  save(); show();
+}
+function firstUnlabeledAfter(i) {
+  for (let k = i + 1; k < PACK.clips.length; k++) if (!state.labels[PACK.clips[k].id]) return k;
+  const any = PACK.clips.findIndex(c => !state.labels[c.id]);
+  return any === -1 ? PACK.clips.length : any;
+}
+
+function download() {
+  const out = { format: FORMAT, pack_id: PACK.batch, member_id: PACK.member_id,
+                annotator_name: state.name, created: new Date().toISOString(), labels: state.labels };
+  const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  const safe = (state.name || PACK.member_id).replace(/[^\p{L}\p{N}_-]+/gu, "_");
+  a.href = URL.createObjectURL(blob); a.download = `ket-qua-${PACK.member_id}-${safe}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+function start() {
+  const name = $("name").value.trim();
+  if (!name) { $("name").focus(); return; }
+  state.name = name; state.index = firstUnlabeled(); save();
+  $("start").classList.add("hidden"); show();
+}
+
+function init() {
+  if (!PACK) { document.body.innerHTML = "<main><h1>Đây là file mẫu, chưa phải gói gán nhãn</h1><p>File này chưa có clip nào. Hãy mở <b>index.html</b> nằm trong thư mục gói <b>pack_member-N</b> (giải nén từ file pack_member-N.zip do người phụ trách gửi).</p></main>"; return; }
+  buildHelp();
+  const stored = safeStorage(() => JSON.parse(localStorage.getItem(storageKey) || "null"));
+  if (stored && stored.labels) { state = stored; $("name").value = stored.name || ""; }
+  else if (safeStorage(() => localStorage.setItem("t", "1")) === null && !safeStorage(() => localStorage.getItem("t")))
+    $("storageWarn").textContent = "Trình duyệt không tự lưu được tiến độ. Hãy bấm Lưu (tải file) thường xuyên.";
+  $("begin").addEventListener("click", start);
+  $("name").addEventListener("keydown", e => { if (e.key === "Enter") start(); });
+  $("play").addEventListener("click", togglePlay);
+  $("slow").addEventListener("click", () => { slow = !slow; $("slow").textContent = slow ? "Tốc độ thường 1×" : "Chậm 0.5×"; play(PACK.clips[state.index]); });
+  $("back").addEventListener("click", () => { if (state.index > 0) { state.index--; show(); } });
+  $("skip").addEventListener("click", () => { state.index = Math.min(PACK.clips.length, state.index + 1); show(); });
+  $("save").addEventListener("click", download); $("save2").addEventListener("click", download);
+  $("review").addEventListener("click", () => { state.index = 0; show(); });
+  $("import").addEventListener("change", ev => {
+    const file = ev.target.files[0]; if (!file) return;
+    file.text().then(text => {
+      const data = JSON.parse(text);
+      if (data.format !== FORMAT || data.member_id !== PACK.member_id) { alert("File này không thuộc gói của bạn."); return; }
+      state.labels = data.labels || {}; state.name = data.annotator_name || state.name; $("name").value = state.name;
+      save(); alert("Đã nạp tiến độ: " + Object.keys(state.labels).length + " clip.");
+    }).catch(() => alert("Không đọc được file."));
+  });
+  document.addEventListener("keydown", e => {
+    if (e.target.tagName === "INPUT" || $("work").classList.contains("hidden")) return;
+    const k = KEYS.indexOf(e.key);
+    if (k !== -1) choose(PACK.labels[k].id);
+    else if (e.key === " ") { e.preventDefault(); togglePlay(); }
+    else if (e.key === "ArrowLeft") $("back").click();
+  });
+}
+function togglePlay() { playing = !playing; $("play").textContent = playing ? "Tạm dừng (Cách)" : "Phát (Cách)"; }
+init();
+</script>
+</body>
+</html>

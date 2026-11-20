@@ -1,4 +1,4 @@
 [tool.pytest.ini_options]
-testpaths = ["apps/api/tests", "services/vision/tests"]
+testpaths = ["apps/api/tests", "services/vision/tests", "services/labeling/tests"]
 pythonpath = ["."]
 addopts = "-q"

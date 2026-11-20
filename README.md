@@ -109,3 +109,13 @@ Có hiệu lực ngay, không cần khởi động lại. Giá trị ngưỡng, 
 | `POST /api/settings` | Cập nhật một phần: `decision{...}`, `auto_open` (bật cần `confirm_auto_open: true`), `camera_source`. Ngưỡng sai (ví dụ confidence_exit > confidence_enter) trả 422, không đổi gì |
 | `POST /api/settings/reset` | Xóa override, về cấu hình mặc định |
 | `POST /api/tables/{id}/rate` | `{hourly_rate}` VND nguyên 0..10.000.000 |
+
+## Gán nhãn hành động (gói offline)
+
+Tạo gói gán nhãn từ video nhiều camera và gộp kết quả của team; hướng dẫn đầy đủ trong [docs/ai/LABELING_GUIDE.md](docs/ai/LABELING_GUIDE.md). Dữ liệu nằm trong `data/label_packs/` (gitignore), không commit clip hay nhãn.
+
+```powershell
+.\.venv\Scripts\python.exe scripts/build_label_pack.py --source cam-a=PATH --source cam-b=PATH --members 4 --redundancy 2
+.\.venv\Scripts\python.exe scripts/merge_labels.py ket-qua-*.json
+```
+
