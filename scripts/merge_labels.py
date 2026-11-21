@@ -51,7 +51,8 @@ def main() -> None:
     for p in r["pairwise"]:
         print(f"  {p['members'][0]} vs {p['members'][1]}: {p['shared_clips']} clip chung, "
               f"đồng ý {p['percent_agreement']}, kappa {p['kappa']}")
-    print(f"Cần xem lại: {len(r['review_clip_ids'])} clip. Đã ghi {final.name} và {report.name} vào {out}")
+    print(f"Bất đồng: {len(r['review_clip_ids'])}; thiếu phiếu hợp lệ: {len(r['insufficient_clip_ids'])} clip. "
+          f"Đã ghi {final.name} và {report.name} vào {out}")
 
 
 if __name__ == "__main__":

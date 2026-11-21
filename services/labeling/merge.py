@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import itertools
 import json
+from glob import glob
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -37,8 +38,18 @@ def parse_result(raw: Any, source: str = "?") -> dict[str, Any]:
 def load_results(paths: list[Path]) -> list[dict[str, Any]]:
     """Load files; several files from one member are combined, a later ``ts`` wins."""
     by_member: dict[str, dict[str, Any]] = {}
+    pack_id: str | None = None
+    expanded: list[Path] = []
     for path in paths:
+        matches = [str(path)] if path.is_file() else sorted(glob(str(path)))
+        if not matches:
+            raise ResultError(f"Không tìm thấy file kết quả: {path}")
+        expanded.extend(Path(p) for p in matches)
+    for path in expanded:
         result = parse_result(json.loads(path.read_text(encoding="utf-8")), str(path))
+        if pack_id is not None and result["pack_id"] != pack_id:
+            raise ResultError("Không gộp kết quả từ các batch khác nhau: clip_id có thể trùng nhau")
+        pack_id = result["pack_id"]
         current = by_member.setdefault(result["member_id"], {**result, "labels": {}})
         for clip_id, item in result["labels"].items():
             old = current["labels"].get(clip_id)
@@ -109,5 +120,6 @@ def merge_results(results: list[dict[str, Any]], min_votes: int = 2) -> dict[str
         "final_label_distribution": dict(Counter(d["label"] for d in decisions.values() if d["label"])),
         "pairwise": pairwise,
         "review_clip_ids": sorted(c for c, d in decisions.items() if d["status"] == "REVIEW"),
+        "insufficient_clip_ids": sorted(c for c, d in decisions.items() if d["status"] == "INSUFFICIENT"),
     }
     return {"decisions": decisions, "report": report}

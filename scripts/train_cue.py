@@ -60,7 +60,7 @@ def export_pose_onnx(pose_weights: str, out_path: Path, imgsz: int = 640) -> Pat
     YOLO, _ = _require_ultralytics()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     model = YOLO(pose_weights)
-    exported = Path(model.export(format="onnx", imgsz=imgsz, half=False, simplify=True))
+    exported = Path(model.export(format="onnx", imgsz=imgsz, half=False, opset=12, simplify=False))
     shutil.copy2(exported, out_path)
     _write_model_meta(out_path, base_weights=pose_weights, imgsz=imgsz, task="pose")
     print(f"Exported pose ONNX -> {out_path}")
@@ -77,7 +77,7 @@ def train_and_export_cue(
     imgsz: int = 640,
     workers: int = 2,
     patience: int = 15,
-    project_dir: str = "runs/cue_train",
+    project_dir: str = "data/datasets/cue_runs",
     name: str = "yolov8n_cue",
     device: str | None = None,
 ) -> Path:
@@ -97,7 +97,7 @@ def train_and_export_cue(
         workers=workers,
         patience=patience,
         device=resolved_device,
-        project=project_dir,
+        project=str(Path(project_dir).resolve()),
         name=name,
         degrees=15.0,
         scale=0.4,
@@ -116,7 +116,7 @@ def train_and_export_cue(
     best_model = YOLO(str(best_pt))
     metrics = best_model.val(data=str(data_yaml.resolve()), imgsz=imgsz, device=resolved_device)
 
-    exported = Path(best_model.export(format="onnx", imgsz=imgsz, half=False, simplify=True))
+    exported = Path(best_model.export(format="onnx", imgsz=imgsz, half=False, opset=12, simplify=False))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(exported, out_path)
 
@@ -158,6 +158,8 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--patience", type=int, default=15)
     parser.add_argument("--device", default=None, help="CUDA device e.g. '0' or 'cpu'")
+    parser.add_argument("--project", default="data/datasets/cue_runs", help="Thư mục lưu lần huấn luyện (dữ liệu riêng)")
+    parser.add_argument("--name", default="yolov8n_cue", help="Tên lần huấn luyện")
     args = parser.parse_args()
 
     if args.export_pose:
@@ -174,6 +176,8 @@ def main() -> None:
             workers=args.workers,
             patience=args.patience,
             device=args.device,
+            project_dir=args.project,
+            name=args.name,
         )
 
 

@@ -149,6 +149,8 @@ def evaluate_video(
     dt = stride / video_fps
     raw_idx = 0
     processed_frames = 0
+    cue_frames = 0
+    cue_detections = 0
     wall_start = time.monotonic()
 
     try:
@@ -165,6 +167,9 @@ def evaluate_video(
                 break
 
             processed_frames += 1
+            frame_cues = sum(d.kind == "cue" for d in detections)
+            cue_detections += frame_cues
+            cue_frames += int(frame_cues > 0)
             for tid, summary in summaries.items():
                 dec = advance(
                     memories[tid],
@@ -220,6 +225,9 @@ def evaluate_video(
         "person_pose_model_ready": detector.is_ready,
         "person_pose_backend": detector.backend_label,
         "cue_model_ready": cue_detector.is_ready,
+        "cue_model_validated": cue_detector.validated,
+        "cue_frames": cue_frames,
+        "cue_detections": cue_detections,
         "cue_backend": cue_detector.backend_label,
         "unbilled_alert_threshold_seconds": decision_cfg.unbilled_alert_seconds,
         "tables": stats,

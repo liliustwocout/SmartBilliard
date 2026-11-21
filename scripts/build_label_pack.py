@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
 
 from services.labeling.sprite import build_sprite, head_box, render_tile
 from services.labeling.windows import (CORE_LABELS, EXTRA_LABELS, Sample, Window, assign_clips,
-                                       bend_score, build_windows, overlaps_any, pick_even)
+                                       bend_score, build_windows, overlaps_any, pick_even, walking_score)
 
 VIDEO_EXTS = {".mp4", ".avi", ".mkv", ".mov"}
 TEMPLATE = ROOT / "tools/label_pack/template.html"
@@ -123,8 +123,8 @@ def main() -> None:
     ap.add_argument("--sample-fps", type=float, default=8.0)
     ap.add_argument("--start", type=float, default=0.0, help="Bỏ qua N giây đầu mỗi video")
     ap.add_argument("--end", type=float, default=None, help="Dừng ở giây thứ N của mỗi video")
-    ap.add_argument("--focus", choices=["bent"], default=None,
-                    help="Lấy mẫu có chủ đích: 'bent' ưu tiên đoạn người cúi người (ứng viên AIMING/SHOOTING). "
+    ap.add_argument("--focus", choices=["bent", "walking"], default=None,
+                    help="Lấy mẫu có chủ đích: 'bent' ưu tiên người cúi, 'walking' ưu tiên người di chuyển. "
                          "Chỉ là gợi ý xếp hạng, nhãn vẫn do người gán.")
     ap.add_argument("--exclude-index", action="append", type=Path, default=[], metavar="clips_index.json",
                     help="Bỏ các đoạn đã nằm trong batch trước (trùng video + thời gian). Lặp lại được.")
@@ -168,11 +168,12 @@ def main() -> None:
     for cam, items in candidates.items():
         if used:
             items = [it for it in items if not overlaps_any(it[0].name, it[1].t_start, it[1].t_end, used)]
-        if args.focus == "bent":
-            scored = [(bend_score(it[1]), it) for it in items]
+        if args.focus:
+            scorer = walking_score if args.focus == "walking" else bend_score
+            scored = [(scorer(it[1]), it) for it in items]
             scored = sorted((x for x in scored if x[0] is not None), key=lambda x: -x[0])
             picked = [it for _, it in scored[:per_cam]]
-            print(f"[{cam}] focus=bent: {len(scored)}/{len(items)} clip có điểm, chọn {len(picked)}")
+            print(f"[{cam}] focus={args.focus}: {len(scored)}/{len(items)} clip có điểm, chọn {len(picked)}")
         else:
             picked = pick_even(items, per_cam, seed=args.seed)
         for video, win, eff in picked:

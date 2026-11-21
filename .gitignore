@@ -21,7 +21,9 @@ data/datasets/
 models/*.onnx
 models/*.pt
 models/*.engine
+models/*.meta.json
 !models/README.md
 data/runtime_settings.json
 configs/zones.backup-*.json
 data/label_packs/
+/runs/

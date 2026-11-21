@@ -7,7 +7,7 @@ import pytest
 
 from services.labeling.merge import FORMAT, ResultError, cohen_kappa, load_results, merge_results, parse_result
 from services.labeling.sprite import build_sprite, head_box, render_tile
-from services.labeling.windows import Sample, Window, assign_clips, bend_score, build_windows, overlaps_any
+from services.labeling.windows import Sample, Window, assign_clips, bend_score, build_windows, overlaps_any, walking_score
 
 
 def _samples(n, fps=8.0, start=0.0, height=0.4, skip=()):
@@ -88,6 +88,58 @@ def test_parse_rejects_bad_files_and_load_keeps_latest_per_member(tmp_path):
     assert len(loaded) == 1 and loaded[0]["labels"]["a"]["label"] == "SHOOTING"
 
 
+def test_results_from_different_batches_cannot_silently_share_clip_ids(tmp_path):
+    paths = []
+    for i, batch in enumerate(("batch-a", "batch-b")):
+        p = tmp_path / f"{i}.json"
+        p.write_text(json.dumps({**_result("m1", {"c00000": "WALKING"}), "pack_id": batch}), encoding="utf-8")
+        paths.append(p)
+    with pytest.raises(ResultError, match="batch"):
+        load_results(paths)
+
+
+def test_result_globs_work_on_windows_and_missing_files_fail_explicitly(tmp_path):
+    for member in ("m1", "m2"):
+        (tmp_path / f"result-{member}.json").write_text(
+            json.dumps(_result(member, {"c1": "WALKING"})), encoding="utf-8")
+    assert len(load_results([tmp_path / "result-*.json"])) == 2
+    literal = tmp_path / "result-[review].json"
+    literal.write_text(json.dumps(_result("m3", {"c1": "WALKING"})), encoding="utf-8")
+    assert load_results([literal])[0]["member_id"] == "m3"
+    with pytest.raises(ResultError, match="file"):
+        load_results([tmp_path / "missing-*.json"])
+
+
+def test_review_pack_includes_insufficient_and_unseen_clips_but_not_agreed(tmp_path):
+    from scripts.build_review_pack import build_review_pack
+
+    batch = tmp_path / "batch"
+    (batch / "_sprites").mkdir(parents=True)
+    clips = {cid: {"video": "private-source.mp4", "frame_indices": [0, 1], "t_start": 0, "t_end": 1}
+             for cid in ("agreed", "invalid", "unseen")}
+    (batch / "clips_index.json").write_text(json.dumps({"batch": "b1", "clips": clips}), encoding="utf-8")
+    sprite, _, _ = build_sprite([np.zeros((32, 32, 3), dtype=np.uint8)] * 2)
+    for cid in clips:
+        (batch / "_sprites" / f"{cid}.jpg").write_bytes(sprite)
+    paths = []
+    for member in ("m1", "m2"):
+        p = tmp_path / f"{member}.json"
+        p.write_text(json.dumps(_result(member, {"agreed": "WALKING", "invalid": "INVALID"})), encoding="utf-8")
+        paths.append(p)
+    out = tmp_path / "review"
+    assert build_review_pack(batch, paths, out) == ["invalid", "unseen"]
+    assert len(list(out.glob("*.zip"))) == 2
+    html = (out / "pack_member-review-1/index.html").read_text(encoding="utf-8")
+    assert '"id": "invalid"' in html and '"id": "unseen"' in html
+    assert "private-source.mp4" not in html and not (out / "clips_index.json").exists()
+    with pytest.raises(FileExistsError):
+        build_review_pack(batch, paths, out)
+    (batch / "_sprites/unseen.jpg").write_bytes(b"broken JPEG")
+    with pytest.raises(ValueError, match="unseen"):
+        build_review_pack(batch, paths, tmp_path / "missing-sprite-review")
+    assert not (tmp_path / "missing-sprite-review").exists()
+
+
 def test_head_box_uses_face_keypoints_else_top_of_box():
     kps = [(0.50, 0.25, 0.9), (0.49, 0.24, 0.9), (0.51, 0.24, 0.9), (0.47, 0.25, 0.9), (0.53, 0.25, 0.9)] + [(0, 0, 0)] * 12
     x1, y1, x2, y2 = head_box((0.4, 0.2, 0.6, 0.8), kps)
@@ -138,6 +190,16 @@ def test_bend_score_ranks_bent_over_standing_and_skips_walking_or_missing_keypoi
     assert bend_score(_window(0.15, shift=0.05)) is None  # travelling = walking
     no_kp = Window(1, tuple(Sample(t=i / 8, frame_index=i, bbox=(0.4, 0.1, 0.6, 0.9)) for i in range(10)))
     assert bend_score(no_kp) is None
+
+
+def test_walking_score_rejects_static_jitter_and_id_switches():
+    assert walking_score(_window(0.15)) is None
+    assert walking_score(_window(0.15, shift=0.001)) is None
+    moving = _window(0.15, shift=0.05)
+    assert walking_score(moving) is not None
+    assert walking_score(_window(0.15, shift=0.1)) > walking_score(moving)
+    assert walking_score(_window(0.15, n=3)) is None
+    assert walking_score(_window(0.15, shift=0.9)) is None
 
 
 def test_overlaps_any_matches_same_video_and_overlapping_span_only():

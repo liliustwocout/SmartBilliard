@@ -3,7 +3,9 @@ and for assigning clips to labelers. No OpenCV/Ultralytics dependency."""
 from __future__ import annotations
 
 import itertools
+import math
 import random
+from statistics import median
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -104,6 +106,29 @@ def overlaps_any(video: str, t_start: float, t_end: float,
                  used: Sequence[tuple[str, float, float]]) -> bool:
     """True when [t_start, t_end] overlaps an already-used (video, start, end) span."""
     return any(v == video and t_start < e and t_end > b for v, b, e in used)
+
+
+def walking_score(window: Window, *, min_samples: int = 6,
+                  min_displacement: float = 0.3, max_step: float = 0.75) -> float | None:
+    """Rank walking candidates by travel in body heights; never assign an action label.
+
+    Average both ends to reduce box jitter. Reject abrupt jumps (possible ID switches)
+    and stationary objects such as the motorcycles misdetected in the first batches.
+    """
+    samples = sorted(window.samples, key=lambda s: s.t)
+    if len(samples) < min_samples:
+        return None
+    height = median(s.bbox[3] - s.bbox[1] for s in samples)
+    if height <= 0:
+        return None
+    points = [((s.bbox[0] + s.bbox[2]) / 2, s.bbox[3]) for s in samples]
+    if any(math.dist(a, b) / height > max_step for a, b in zip(points, points[1:])):
+        return None
+    n = max(1, len(points) // 4)
+    start = tuple(sum(p[i] for p in points[:n]) / n for i in (0, 1))
+    end = tuple(sum(p[i] for p in points[-n:]) / n for i in (0, 1))
+    score = math.dist(start, end) / height
+    return score if score >= min_displacement else None
 
 
 def pick_even(items: Sequence, count: int, seed: int = 0) -> list:

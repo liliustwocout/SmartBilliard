@@ -46,6 +46,43 @@ Cả nhóm cần thống nhất định nghĩa trên trước khi bắt đầu. 
 - Chỉ bốn nhãn chính được tính là phiếu. `Không chắc` và `Clip lỗi` không bao giờ thành nhãn cuối.
 - Clip hòa phiếu (REVIEW) cần cả nhóm xem lại. Kappa thấp nghĩa là định nghĩa nhãn chưa rõ, nên thống nhất lại trước khi gán thêm.
 
+### Rà soát clip thiếu phiếu, ưu tiên WALKING
+
+`INSUFFICIENT` nghĩa là chưa đủ **phiếu hợp lệ**, kể cả khi hai thành viên đều chọn `INVALID`. Không đổi clip xe máy, khung bám sai người hoặc đổi ID thành một trong bốn nhãn để làm đủ số lượng. Hành động xếp bi/làm việc khác không thuộc bốn lớp thì chọn `UNSURE`.
+
+```powershell
+.\.venv\Scripts\python.exe scripts/build_review_pack.py data/label_packs/BATCH `
+  --results "data/label_packs/BATCH/ketqua/*.json" `
+  --out data/label_packs/BATCH/review-moi --members 2
+```
+
+Mỗi người nhận một gói có tất cả clip chưa chốt, kể cả clip chưa có phiếu nào; tên video/camera và nhãn gợi ý không đưa vào gói. Thư mục đích phải mới để tránh ghi đè lần rà soát trước. Hai người trả kết quả rồi gộp **cùng các phiếu cũ của đúng batch đó**; không gộp khác batch. Wildcard file kết quả được mở rộng trong Python nên dùng được trên Windows.
+
+Lấy thêm clip đi lại từ đoạn video chưa nằm trong batch trước:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/build_label_pack.py --source cam-a=PATH `
+  --focus walking --exclude-index data/label_packs/BATCH/clips_index.json `
+  --members 4 --redundancy 2 --max-clips 48
+```
+
+Điểm `walking_score` xếp hạng dịch chuyển, giảm ảnh hưởng rung box và bỏ bước nhảy lớn có thể là đổi ID. Nó không xác nhận có người thật, không phân loại hành động và vẫn có thể chọn nhầm. Số clip xuất có thể ít hơn `--max-clips`.
+
+Kết quả AI rà soát nằm riêng dưới `ai_review_*/`, định dạng `smartbilliard-ai-review-v1`, có lý do và `human_review_required=true`. Chúng không phải phiếu độc lập của thành viên và không tự đưa vào `merged/labels_final.jsonl`. Không cộng nhãn AI vào kappa của nhóm.
+
+### Chốt nhãn cho huấn luyện thử nghiệm sau khi AI rà soát
+
+Khi giao AI làm tiếp phần rà soát, dùng bản chốt `smartbilliard-adjudication-v1`, ghi `reviewer_type=AI` và lý do từng clip. `ACCEPT` chỉ nhận bốn nhãn chính; `EXCLUDE` dùng `INVALID` hoặc `UNSURE` để loại clip lỗi, ngoài bốn lớp hoặc không đủ bằng chứng. Loại clip là một kết quả rà soát hoàn tất, không ép nó thành nhãn hành động.
+
+```powershell
+.\.venv\Scripts\python.exe scripts/finalize_label_review.py data/label_packs/BATCH `
+  --review PATH/adjudication.json --out data/label_packs/NEW_REVIEWED_OUTPUT
+```
+
+Script giữ nguyên phiếu và nhãn đồng thuận cũ; đầu ra phải là thư mục mới. Bản chốt phải phủ đủ các clip chưa có nhãn đồng thuận, không có ID lạ/trùng. Nhãn AI mang `status=AI_ADJUDICATED`, không thêm người gán nhãn giả hoặc thay số liệu kappa. Nếu clip lẫn hành động, có thể giữ một đoạn rõ ràng dài ít nhất hai giây bằng `sample_start`/`sample_stop` (chỉ số đầu vào, stop không bao gồm); script cắt đồng bộ frame, box và keypoint, tính lại thời gian video.
+
+Đầu ra gồm `labels_reviewed.jsonl`, `excluded.jsonl`, `clips_index.json` và manifest/hash nguồn. Đây là nhãn đã được AI chốt cho thử nghiệm local, không phải xác nhận của hai người hoặc nghiệm thu camera. Xem [lượt rà soát ngày 21/11](LABEL_REVIEW_20261121.md) và dataset đã xuất từ các nhãn này.
+
 ## 3. Quyền riêng tư
 - Dữ liệu quay khách của quán: cần sự đồng ý của quán và khách về việc dùng hình ảnh để làm dữ liệu huấn luyện.
 - `data/label_packs/` đã được gitignore; không commit clip, gói hay nhãn.
