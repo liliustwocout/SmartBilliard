@@ -22,7 +22,7 @@ from apps.api.billing import quote, utc
 from apps.api.config import ROOT, Settings
 from apps.api.runtime_settings import (RateUpdate, SettingsUpdate, apply_overrides, load_overrides,
                                        merge_decision, save_overrides)
-from apps.api.models import Base, DetectionEvent, PlaySession, Table
+from apps.api.models import Base, DetectionEvent, PlaySession, Table, LATEST_DETECTION_EVENTS_INDEX
 from apps.api.schemas import (
     ExtractDatasetRequest,
     GenerateDemoRequest,
@@ -37,6 +37,7 @@ from services.vision.adapters import sanitize_uri
 from services.vision.decision import Memory, Observation, advance
 from services.vision.annotator import create_standby_frame_jpeg
 from services.vision.calibration import CalibrationConfig, load_calibration_config, save_calibration_config
+from services.vision.auto_calibration import propose_table_zones
 from services.vision.mapper import TableObservationSummary
 from services.vision.preview import get_preview_frame_jpeg
 from services.vision.runner import CameraRunner
@@ -177,12 +178,15 @@ def create_app(settings: Settings | None = None,
         model_path=ROOT / "models/yolov8n-pose.onnx",
         fallback_model_path=ROOT / "models/yolov8n.onnx",
         cue_model_path=ROOT / "models/yolov8n-cue.onnx",
+        performance=settings.vision,
         on_observation=on_camera_observation,
     )
 
     @asynccontextmanager
     async def lifespan(_app):
         Base.metadata.create_all(engine)
+        # create_all does not add new indexes to tables that already exist.
+        LATEST_DETECTION_EVENTS_INDEX.create(engine, checkfirst=True)
         with Session(engine) as db:
             for number in range(1, settings.table_count + 1):
                 if not db.get(Table, number):
@@ -542,6 +546,9 @@ def create_app(settings: Settings | None = None,
             "camera_id": settings.camera_id,
             "camera_source": str(runner.source_spec),
             "fps": runner.measured_fps,
+            "inference_fps": runner.inference_fps,
+            "source_fps": runner.source_fps,
+            "target_fps": runner.target_fps,
             "models": runner.get_model_status(),
             "paused_tables": sorted(runner.paused_tables),
             "inference_paused": runner.inference_paused,
@@ -564,10 +571,15 @@ def create_app(settings: Settings | None = None,
         """MJPEG video stream with real-time detection bounding boxes, foot anchors, and ROI zones."""
         async def frame_generator():
             boundary = b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+            last_sequence = -1
             while True:
                 try:
                     if runner and runner.is_running:
-                        frame_bytes = runner.get_annotated_frame_jpeg() if annotated else runner.get_latest_frame_jpeg()
+                        sequence, frame_bytes = await asyncio.to_thread(runner.get_stream_frame, annotated)
+                        if sequence == last_sequence:
+                            await asyncio.sleep(.001)
+                            continue
+                        last_sequence = sequence
                     else:
                         frame_bytes = create_standby_frame_jpeg(
                             message="CAMERA DANG TAT",
@@ -575,8 +587,9 @@ def create_app(settings: Settings | None = None,
                         )
                     if frame_bytes:
                         yield boundary + frame_bytes + b"\r\n"
-                    # Throttle stream output to ~10 FPS for local bandwidth/CPU efficiency
-                    await asyncio.sleep(0.1)
+                    # The producer already paces real frames. Polling for its next sequence
+                    # avoids compounding producer and asyncio timer rounding on Windows.
+                    await asyncio.sleep(.001 if runner.is_running else .5)
                 except asyncio.CancelledError:
                     break
                 except Exception:
@@ -629,6 +642,20 @@ def create_app(settings: Settings | None = None,
             "overlaps": [o.model_dump() for o in overlaps],
             "message": "Đã lưu cấu hình ROI thành công",
         }
+
+    @app.post("/api/calibration/auto-detect")
+    async def auto_detect_table_zones(payload: CalibrationConfig):
+        if not runner.is_running or runner.status != "CONNECTED":
+            raise HTTPException(409, "Bật camera hoặc phát video thật trước khi tự nhận diện bàn.")
+        frame = runner.get_latest_frame()
+        if frame is None:
+            raise HTTPException(409, "Chưa có khung hình camera để nhận diện bàn.")
+        try:
+            result = await asyncio.to_thread(propose_table_zones, frame, payload,
+                                             settings.table_count, settings.auto_roi)
+        except ValueError as err:
+            raise HTTPException(422, str(err)) from err
+        return {**result, "captured_at": iso(clock())}
 
     def _resolve_recording(filename: str) -> Path:
         safe = _safe_video_filename(filename)

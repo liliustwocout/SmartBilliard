@@ -119,7 +119,8 @@ def test_vision_pipeline_integration():
         PersonDetection(bbox=(0.2, 0.2, 0.3, 0.6), confidence=0.85, foot_anchor=(0.25, 0.6))
     ]
 
-    pipeline = VisionPipeline(source=mock_source, detector=mock_detector)
+    pipeline = VisionPipeline(source=mock_source, detector=mock_detector,
+                              cue_detector=MagicMock(is_ready=False, validated=False))
     ok, frame, detections = pipeline.process_next_frame(timestamp=123456.0)
 
     assert ok is True
@@ -147,7 +148,8 @@ def test_vision_pipeline_with_zone_mapper():
     mock_mapper = MagicMock()
     mock_mapper.map_frame.return_value = ([], {1: MagicMock(present=True, table_id=1)})
 
-    pipeline = VisionPipeline(source=mock_source, detector=mock_detector, mapper=mock_mapper)
+    pipeline = VisionPipeline(source=mock_source, detector=mock_detector, mapper=mock_mapper,
+                              cue_detector=MagicMock(is_ready=False, validated=False))
     ok, frame, detections, summaries = pipeline.process_frame_for_tables()
 
     assert ok is True

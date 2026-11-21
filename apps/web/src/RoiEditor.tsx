@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SyntheticEvent } from 'react';
 import { request } from './api';
-import type { CalibrationConfig, CalibrationResponse, TableZoneConfig, ZoneOverlapWarning } from './types';
+import type { AutoCalibrationResponse, CalibrationConfig, CalibrationResponse, TableZoneConfig, ZoneOverlapWarning } from './types';
 
 const DEFAULT_VIEW_WIDTH = 960;
 const DEFAULT_VIEW_HEIGHT = 540;
@@ -250,9 +250,14 @@ export function RoiEditor({
   const [hideOtherTables, setHideOtherTables] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(!initialResponse);
   const [saving, setSaving] = useState<boolean>(false);
+  const [autoDetecting, setAutoDetecting] = useState(false);
+  const [autoPreviewUrl, setAutoPreviewUrl] = useState<string | null>(null);
+  const [autoWarnings, setAutoWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string>('');
   const [notice, setNotice] = useState<string>('');
   const svgRef = useRef<SVGSVGElement>(null);
+  const configRef = useRef(config);
+  configRef.current = config;
   const VIEW_WIDTH = viewSize.width;
   const VIEW_HEIGHT = viewSize.height;
   const hasUnsavedChanges = config !== null && savedConfig !== null && JSON.stringify(config) !== JSON.stringify(savedConfig);
@@ -540,6 +545,36 @@ export function RoiEditor({
     setNotice(`Đã đặt lại đa giác mặc định cho Bàn ${selectedTable}`);
   };
 
+  const handleAutoDetect = async () => {
+    if (!config) return;
+    setAutoDetecting(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await request<AutoCalibrationResponse>('/calibration/auto-detect', config, 15000);
+      if (configRef.current !== config) {
+        setError('ROI đã thay đổi trong lúc nhận diện. Bấm Tự nhận diện bàn để thử lại trên bản đang chỉnh.');
+        return;
+      }
+      setAutoPreviewUrl(result.preview_data_url);
+      setUseLiveStream(false);
+      setAutoWarnings(result.warnings);
+      if (result.updated_table_ids.length === 0) {
+        setError(result.message || 'Chưa tìm thấy mặt bàn đủ rõ.');
+        return;
+      }
+      setConfig(result.config);
+      setOverlaps(result.overlaps);
+      setSelectedTable(result.updated_table_ids[0]);
+      setSelectedVertex(null);
+      setNotice(result.message || 'Đã tạo đề xuất ROI. Kiểm tra rồi bấm Lưu cấu hình ROI.');
+    } catch (err: unknown) {
+      setError((err as Error).message || 'Không thể tự nhận diện bàn.');
+    } finally {
+      setAutoDetecting(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!config) return;
     setSaving(true);
@@ -578,8 +613,21 @@ export function RoiEditor({
         <div className="roi-header-actions">
           <button
             type="button"
+            className="button primary"
+            disabled={autoDetecting || saving || !config}
+            onClick={handleAutoDetect}
+            title="Phân tích màu mặt nỉ và đường biên từ khung hình camera/video hiện tại bằng OpenCV local"
+          >
+            {autoDetecting ? 'Đang nhận diện bàn…' : 'Tự nhận diện bàn'}
+          </button>
+          <button
+            type="button"
             className={`button ${useLiveStream ? 'primary' : 'subtle'}`}
-            onClick={() => setUseLiveStream(!useLiveStream)}
+            disabled={autoDetecting}
+            onClick={() => {
+              setAutoPreviewUrl(null);
+              setUseLiveStream(!useLiveStream);
+            }}
             title="Bật stream trực tiếp từ camera làm ảnh nền hiệu chuẩn"
           >
             {useLiveStream ? '● Stream camera trực tiếp' : 'Ảnh nền tĩnh'}
@@ -587,18 +635,24 @@ export function RoiEditor({
           <button
             type="button"
             className="button subtle"
+            disabled={autoDetecting}
             onClick={() => {
+              setAutoPreviewUrl(null);
               setPreviewKey(Date.now());
               setNotice('Đã chụp frame mới từ camera');
             }}
           >
             Chụp lại ảnh nền
           </button>
-          <button type="button" className="button primary" disabled={saving || !config} onClick={handleSave}>
+          <button type="button" className="button primary" disabled={saving || autoDetecting || !config} onClick={handleSave}>
             {saving ? 'Đang lưu…' : 'Lưu cấu hình ROI'}
           </button>
         </div>
       </div>
+
+      <p className="roi-card-hint">
+        Tự nhận diện dùng màu mặt nỉ xanh lá/xanh dương và hình học ảnh. Mặt bàn bị phủ hoặc che nhiều có thể bị bỏ sót; kiểm tra vùng đứng trước khi lưu.
+      </p>
 
       {error && (
         <div className="message error" role="alert">
@@ -616,6 +670,12 @@ export function RoiEditor({
       {hasUnsavedChanges && (
         <div className="message warning" role="status">
           ROI đang chỉnh chưa được lưu. Trang Camera trực tiếp vẫn hiển thị ROI đã lưu; bấm “Lưu cấu hình ROI” để áp dụng.
+        </div>
+      )}
+
+      {autoWarnings.length > 0 && (
+        <div className="message warning" role="status">
+          <ul>{autoWarnings.map(warning => <li key={warning}>{warning}</li>)}</ul>
         </div>
       )}
 
@@ -666,6 +726,15 @@ export function RoiEditor({
         >
           + Thêm bàn
         </button>
+        <button
+          type="button"
+          className="button danger"
+          disabled={!currentTable || saving}
+          onClick={() => handleDeleteTable(selectedTable)}
+          title="Xóa vùng mặt nỉ và vùng đứng của bàn đang chọn; bấm Lưu để áp dụng"
+        >
+          Xóa ROI Bàn {selectedTable.toString().padStart(2, '0')}
+        </button>
         <label className="roi-hide-others">
           <input
             type="checkbox"
@@ -687,8 +756,8 @@ export function RoiEditor({
             />
           ) : (
             <img
-              src={`/api/calibration/preview?t=${previewKey}`}
-              alt="Camera Calibration Preview"
+              src={autoPreviewUrl ?? `/api/calibration/preview?t=${previewKey}`}
+              alt={autoPreviewUrl ? 'Khung hình dùng để tự nhận diện ROI' : 'Camera Calibration Preview'}
               onLoad={handleImageLoad}
               className="roi-bg-img"
             />
@@ -858,13 +927,6 @@ export function RoiEditor({
                 <p className="roi-card-hint">
                   Tắt khi bàn phủ vải hoặc không dùng để bỏ qua nhận diện AI cho bàn này.
                 </p>
-                <button
-                  type="button"
-                  className="button danger full-width"
-                  onClick={() => handleDeleteTable(currentTable.table_id)}
-                >
-                  Xóa vùng bàn
-                </button>
               </div>
 
               <div className="roi-card">

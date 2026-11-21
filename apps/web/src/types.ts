@@ -127,6 +127,16 @@ export type CalibrationResponse = {
   message?: string;
 };
 
+export type AutoCalibrationResponse = CalibrationResponse & {
+  method: 'opencv_cloth_contours_v1';
+  requires_review: true;
+  detected_count: number;
+  updated_table_ids: number[];
+  warnings: string[];
+  preview_data_url: string;
+  captured_at: string;
+};
+
 export type DecisionSettings = {
   policy: 'PERSON_ONLY' | 'PERSON_AND_CUE' | 'POSE_AND_CUE';
   presence_seconds: number; confidence_enter: number; confidence_exit: number;

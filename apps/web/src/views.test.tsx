@@ -232,6 +232,17 @@ describe('reorganized UI views', () => {
     expect(html).not.toContain('<dl class="system-grid live-status-grid" style=');
   });
 
+  it('LiveView distinguishes the fast preset from missing cue weights', () => {
+    const data = makeSnapshot();
+    data.model_status.cue = { ...data.model_status.cue, loaded: false, backend: 'DISABLED' };
+    const html = renderToStaticMarkup(
+      <LiveView data={data} locked={false} onStartCamera={vi.fn()} onStopCamera={vi.fn()}
+        onJumpCalibration={vi.fn()} onNotice={vi.fn()} onError={vi.fn()} />,
+    );
+    expect(html).toContain('Đã tắt để ưu tiên FPS (chế độ nhanh)');
+    expect(html).not.toContain('Chưa nạp weights gậy');
+  });
+
   it('HistoryView shows settled demo revenue from backend snapshot', () => {
     const data = makeSnapshot();
     const paidSession: Session = {
@@ -342,7 +353,8 @@ describe('reorganized UI views', () => {
     expect(htmlPartial).toContain('Chưa hiệu chuẩn');
     expect(htmlPartial).toContain('+ Thêm bàn');
     expect(htmlPartial).toContain('Theo dõi AI cho Bàn 01');
-    expect(htmlPartial).toContain('Xóa vùng bàn');
+    expect(htmlPartial).toContain('Xóa ROI Bàn 01');
+    expect(htmlPartial).toContain('Tự nhận diện bàn');
 
     // Add tables 2, 3, 4 and enforce TABLE_COUNT limit (= 4)
     let cfg = baseConfig;

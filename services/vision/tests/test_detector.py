@@ -33,6 +33,30 @@ def test_loaded_cue_weights_do_not_claim_validation():
     assert detector.validated is False
 
 
+def test_cue_detector_decodes_single_class_letterboxed_head(tmp_path):
+    detector = YoloCueDetector(tmp_path / "missing.onnx", prefer_gpu=False)
+    detector._net = MagicMock()
+    output = np.array([[[320], [320], [320], [80], [.9]]], dtype=np.float32)
+    frame = np.zeros((320, 640, 3), dtype=np.uint8)
+    with patch("services.vision.detector._forward_with_cpu_fallback", return_value=(output, "CPU")):
+        detections = detector.detect(frame, camera_id="test", timestamp=12.5)
+    assert len(detections) == 1
+    cue = detections[0]
+    assert cue.kind == "cue" and cue.camera_id == "test" and cue.timestamp == 12.5
+    assert cue.bbox == pytest.approx((.25, .375, .75, .625))
+    assert cue.confidence == pytest.approx(.9)
+    assert detector.validated is False
+
+
+@pytest.mark.parametrize("shape", [(1, 84, 10), (1, 56, 10), (1, 10, 5), (5, 10)])
+def test_cue_detector_rejects_coco_pose_or_malformed_heads(tmp_path, shape):
+    detector = YoloCueDetector(tmp_path / "missing.onnx", prefer_gpu=False)
+    detector._net = MagicMock()
+    with patch("services.vision.detector._forward_with_cpu_fallback",
+               return_value=(np.ones(shape, dtype=np.float32), "CPU")):
+        assert detector.detect(np.zeros((320, 640, 3), dtype=np.uint8)) == []
+
+
 def test_detector_with_real_onnx_model():
     model_file = Path("models/yolov8n.onnx")
     if not model_file.exists():

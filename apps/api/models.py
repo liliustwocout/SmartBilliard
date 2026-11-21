@@ -47,3 +47,8 @@ class DetectionEvent(Base):
     source: Mapped[str] = mapped_column(String(20))
     payload: Mapped[dict] = mapped_column(JSON)
     result: Mapped[dict] = mapped_column(JSON)
+
+
+LATEST_DETECTION_EVENTS_INDEX = Index(
+    "ix_detection_events_latest", DetectionEvent.timestamp.desc(), DetectionEvent.id.desc(),
+)

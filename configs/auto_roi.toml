@@ -1,0 +1,19 @@
+# Experimental OpenCV colour/contour proposals for visible blue/green cloth.
+# Standing margins are estimates in the table's projected plane, not measured floor distances.
+analysis_width = 960
+hue_min = 35
+hue_max = 135
+saturation_min = 70
+value_min = 60
+morphology_size = 5
+long_edge_opening_fraction = 0.25
+min_area_ratio = 0.006
+max_area_ratio = 0.55
+min_cloth_coverage = 0.65
+min_aspect_ratio = 1.3
+max_aspect_ratio = 8.0
+# Tables in these landscape camera views have a predominantly horizontal long edge.
+max_long_edge_angle_degrees = 45
+polygon_epsilon = 0.02
+standing_margin = 0.55
+match_iou = 0.2

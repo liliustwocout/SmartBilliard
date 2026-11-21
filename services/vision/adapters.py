@@ -59,6 +59,7 @@ class FileVideoSource:
         camera_id: str = "file-cam",
         loop: bool = True,
         realtime_pacing: bool = False,
+        decoder_threads: int = 2,
     ) -> None:
         self.file_path = Path(file_path).resolve()
         if not self.file_path.exists():
@@ -67,6 +68,7 @@ class FileVideoSource:
         self.camera_id = camera_id
         self.loop = loop
         self.realtime_pacing = realtime_pacing
+        self.decoder_threads = decoder_threads
         self._cap: cv2.VideoCapture | None = None
         self._lock = threading.Lock()
         self._status: Literal["CONNECTED", "EOF", "ERROR", "CLOSED"] = "CLOSED"
@@ -78,7 +80,14 @@ class FileVideoSource:
         self._open()
 
     def _open(self) -> None:
-        self._cap = cv2.VideoCapture(str(self.file_path))
+        if hasattr(cv2, "CAP_PROP_N_THREADS"):
+            self._cap = cv2.VideoCapture(str(self.file_path), cv2.CAP_FFMPEG,
+                                         [cv2.CAP_PROP_N_THREADS, self.decoder_threads])
+        else:
+            self._cap = cv2.VideoCapture(str(self.file_path))
+        if not self._cap.isOpened():
+            self._cap.release()
+            self._cap = cv2.VideoCapture(str(self.file_path))
         if not self._cap.isOpened():
             self._status = "ERROR"
             logger.error("Failed to open video file: %s", self.file_path)

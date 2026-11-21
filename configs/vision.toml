@@ -1,0 +1,10 @@
+# Actual throughput still depends on hardware and source frame rate.
+target_fps = 30
+observation_fps = 5
+opencv_threads = 1
+decoder_threads = 2
+dml_device_id = 0
+# The unvalidated cue model is optional; Pose + tracking is the fast preset.
+cue_enabled = false
+preview_width = 960
+jpeg_quality = 75

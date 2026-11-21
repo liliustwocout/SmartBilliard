@@ -67,6 +67,25 @@ def test_initial_dashboard_has_no_fabricated_sessions(client):
     assert data["model_status"]["cue"]["validated"] is False
 
 
+def test_startup_adds_latest_event_index_to_existing_database_without_losing_data(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "existing.db"
+    settings = Settings(database_url=f"sqlite:///{path}", zones_config=str(tmp_path / "zones.json"))
+    with TestClient(create_app(settings, Clock()), base_url="http://127.0.0.1") as client:
+        observe(client)
+    with sqlite3.connect(path) as db:
+        before = db.execute("SELECT count(*) FROM detection_events").fetchone()[0]
+        db.execute("DROP INDEX ix_detection_events_latest")
+    for _ in range(2):
+        with TestClient(create_app(settings, Clock()), base_url="http://127.0.0.1") as client:
+            assert client.get("/api/dashboard").status_code == 200
+        with sqlite3.connect(path) as db:
+            assert db.execute("SELECT count(*) FROM detection_events").fetchone()[0] == before
+            plan = db.execute("EXPLAIN QUERY PLAN SELECT id FROM detection_events ORDER BY timestamp DESC, id DESC LIMIT 30").fetchall()
+            assert any("ix_detection_events_latest" in row[3] for row in plan)
+
+
 def test_simulation_to_staff_confirmation_checkout_and_history(client):
     client, clock = client
     for _ in range(4):
@@ -630,3 +649,55 @@ def test_multi_table_roi_calibration_snapshot_status_and_overlaps(tmp_path):
         assert dash_tables[2]["roi_calibrated"] is True and dash_tables[2]["roi_enabled"] is True
         assert dash_tables[3]["roi_calibrated"] is True and dash_tables[3]["roi_enabled"] is False
         assert dash_tables[4]["roi_calibrated"] is False and dash_tables[4]["roi_enabled"] is False
+
+        session = open_table(client, 1)
+        remaining = {**multi_payload, "tables": multi_payload["tables"][1:]}
+        assert client.post("/api/calibration/zones", json=remaining).status_code == 200
+        assert client.get("/api/calibration/zones").json()["config"] == remaining
+        dash_tables = {t["id"]: t for t in client.get("/api/dashboard").json()["tables"]}
+        assert dash_tables[1]["roi_calibrated"] is False and dash_tables[1]["roi_enabled"] is False
+        assert dash_tables[1]["session"]["id"] == session["id"]
+        assert dash_tables[1]["session"]["status"] == "ACTIVE"
+
+        empty = {**multi_payload, "tables": []}
+        assert client.post("/api/calibration/zones", json=empty).status_code == 200
+        assert client.get("/api/calibration/zones").json()["config"]["tables"] == []
+        assert all(not t["roi_calibrated"] for t in client.get("/api/tables").json())
+
+
+def test_auto_roi_requires_real_frame_and_never_saves_proposals(tmp_path, monkeypatch):
+    import base64
+    import cv2
+    import numpy as np
+
+    zones_path = tmp_path / "zones.json"
+    settings = Settings(database_url=f"sqlite:///{tmp_path / 'auto_roi.db'}", zones_config=str(zones_path))
+    payload = {"camera_id": "cam-test", "tables": []}
+    with TestClient(create_app(settings, Clock()), base_url="http://127.0.0.1") as client:
+        runner = client.app.state.runner
+        assert client.post("/api/calibration/auto-detect", json=payload).status_code == 409
+        assert not zones_path.exists()
+        frame = np.full((400, 640, 3), 60, dtype=np.uint8)
+        cv2.fillConvexPoly(frame, np.array([[100, 150], [500, 170], [480, 320], [80, 290]]), (190, 105, 25))
+        with monkeypatch.context() as patch:
+            patch.setattr(type(runner), "is_running", property(lambda _: True))
+            patch.setattr(type(runner), "status", property(lambda _: "CONNECTED"))
+            patch.setattr(runner, "get_latest_frame", lambda: None)
+            assert client.post("/api/calibration/auto-detect", json=payload).status_code == 409
+            patch.setattr(runner, "get_latest_frame", lambda: frame.copy())
+            response = client.post("/api/calibration/auto-detect", json=payload)
+            assert response.status_code == 200, response.text
+            result = response.json()
+            assert result["detected_count"] == 1 and result["updated_table_ids"] == [1]
+            assert result["requires_review"] is True
+            assert result["captured_at"].endswith("+00:00")
+            assert base64.b64decode(result["preview_data_url"].split(",", 1)[1]).startswith(b"\xff\xd8")
+            assert not zones_path.exists()
+            assert client.get("/api/sessions").json() == []
+            saved = client.post("/api/calibration/zones", json=result["config"])
+            assert saved.status_code == 200, saved.text
+            original_bytes = zones_path.read_bytes()
+            again = client.post("/api/calibration/auto-detect", json=result["config"])
+            assert again.status_code == 200
+            assert zones_path.read_bytes() == original_bytes
+            assert client.get("/api/calibration/zones").json()["config"] == result["config"]

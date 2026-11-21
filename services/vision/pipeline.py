@@ -69,7 +69,7 @@ class VisionPipeline:
             )
 
         # Run cue detector only when at least one person is detected (saves GPU/CPU load on empty frames)
-        if tracked_persons and self.cue_detector is not None and getattr(self.cue_detector, "validated", False):
+        if tracked_persons and self.cue_detector is not None and self.cue_detector.is_ready:
             cue_dets = self.cue_detector.detect(
                 frame,
                 camera_id=self.source.camera_id,
@@ -106,5 +106,9 @@ class VisionPipeline:
         if not ok or frame is None or self.mapper is None:
             return ok, frame, detections, {}
 
-        _, table_summaries = self.mapper.map_frame(detections, timestamp=ts)
+        # Experimental cue boxes are visible in the preview, but cannot influence the FSM.
+        trusted_detections = detections
+        if not getattr(self.cue_detector, "validated", False):
+            trusted_detections = [d for d in detections if d.kind != "cue"]
+        _, table_summaries = self.mapper.map_frame(trusted_detections, timestamp=ts)
         return True, frame, detections, table_summaries

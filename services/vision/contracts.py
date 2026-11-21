@@ -23,6 +23,9 @@ class Detection:
 class CueDetector(Protocol):
     validated: bool
 
+    @property
+    def is_ready(self) -> bool: ...
+
     def detect(self, frame: object, *, camera_id: str, timestamp: float) -> list[Detection]: ...
 
 

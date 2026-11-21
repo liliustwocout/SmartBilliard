@@ -79,9 +79,25 @@ Phát tín hiệu bằng CLI (API phải đang chạy):
 
 ## Camera / AI: tích hợp thử nghiệm, chưa nghiệm thu model
 
-Nhánh hiện tại có nguồn video/camera, ROI editor, overlay, tracker và đường nạp YOLO ONNX qua OpenCV DNN. `CAMERA_ENABLED` mặc định tắt; `models/` hiện chưa có weights ONNX nên camera có hình chỉ hiển thị khung hình và ROI, **không có nhận diện người/gậy**. `GET /api/camera/status` và dashboard trả trạng thái model thực tế (`loaded`, `backend`); FPS của vòng đọc hình không chứng minh inference. Khi có weights, code thử CUDA FP16 nếu OpenCV hỗ trợ, còn không dùng CPU. Chưa có benchmark/kiểm chứng thực địa để kết luận độ chính xác hoặc bật tính tiền tự động. `configs/zones.example.json` là ROI minh họa; phải vẽ lại trên khung hình thực và bấm **Lưu cấu hình ROI** thì màn Camera trực tiếp mới dùng vùng mới.
+Nhánh hiện tại có nguồn video/camera, ROI editor, overlay, tracker và đường nạp YOLO ONNX qua OpenCV DNN. `CAMERA_ENABLED` mặc định tắt; weights riêng không kèm Git, trạng thái thực tế tùy file trên máy. `GET /api/camera/status` và dashboard trả trạng thái model (`loaded`, `backend`, riêng gậy có `validated`); FPS của vòng đọc hình không chứng minh inference. Khi có weights, code thử CUDA FP16 nếu OpenCV hỗ trợ, còn không dùng CPU. Model gậy một lớp đã nạp có thể chạy để vẽ **gậy thử nghiệm** khi có người; gậy chưa kiểm chứng bị lọc trước bước tổng hợp bàn/FSM và `validated=false` vẫn giữ nguyên. Chưa có kiểm chứng thực địa để bật tính tiền tự động. `configs/zones.example.json` là ROI minh họa; phải vẽ lại trên khung hình thực và bấm **Lưu cấu hình ROI** thì màn Camera trực tiếp mới dùng vùng mới.
 
 **Tiết kiệm tính toán và cảnh báo xác nhận.** Bàn đã có phiên ACTIVE (mở thủ công, xác nhận hoặc tự mở demo) bị tạm dừng nhận diện: runner không phát quan sát cho bàn đó, và khi *mọi* bàn trong ROI đều đang có phiên thì pipeline vẫn đọc khung hình (để xem live) nhưng bỏ qua YOLO và tracker. Thanh toán xong, bàn trống lại và nhận diện chạy lại (tracker được reset). Mô hình chạy trên toàn khung hình nên khi chỉ một phần bàn có phiên, YOLO vẫn chạy cho các bàn còn lại. `GET /api/tables`/snapshot có thêm `ai_paused` theo bàn; `GET /api/camera/status` có thêm `paused_tables` và `inference_paused`. Khi AI thấy đang đánh và bàn chưa mở (`NEEDS_CONFIRMATION`), Tổng quan hiện banner với nút **Xem camera** và **Xác nhận mở**; AI không tự đóng phiên.
+
+Trong **Hiệu chuẩn ROI**, chọn bàn rồi bấm **Xóa ROI Bàn …** cạnh **Thêm bàn**, xác nhận và bấm **Lưu cấu hình ROI**. Thao tác gỡ cả vùng mặt nỉ và vùng đứng; bàn chuyển về **Chưa hiệu chuẩn** và có thể tạo ROI lại. Phiên chơi, hóa đơn và danh sách bàn tính tiền được giữ nguyên.
+
+**Tự nhận diện bàn:** phát video hoặc bật camera, vào **Hiệu chuẩn ROI** và bấm **Tự nhận diện bàn**. Hệ thống phân tích khung hình thật bằng màu mặt nỉ xanh lá/xanh dương và đường biên OpenCV local, tạo đề xuất mặt bàn cùng vùng đứng ước lượng, đồng thời giữ ảnh đã phân tích làm nền để kiểm tra. Đây là xử lý ảnh theo quy tắc, chưa có model AI nhận diện bàn đã huấn luyện. ROI khớp vùng cũ giữ số bàn và trạng thái bật/tắt; vùng chưa tìm lại được giữ nguyên. Kiểm tra số bàn, kéo lại đỉnh/vùng đứng và bấm **Lưu cấu hình ROI** để áp dụng. Bấm **Chụp lại ảnh nền** để trở về khung hình hiện tại.
+
+Ngưỡng tự nhận diện nằm ở `configs/auto_roi.toml` (có thể đổi đường dẫn qua `AUTO_ROI_CONFIG`), được validate khi khởi động. Bàn phủ vải, bị che nhiều, mặt nỉ màu khác, góc quá xiên hoặc ánh sáng xấu có thể bị bỏ sót/nhận nhầm; kết quả không phải đo đạc mặt sàn hay độ chính xác AI đã nghiệm thu. Chức năng không tự lưu ROI, mở/đóng phiên hoặc thay đổi giá tiền.
+
+Mặc định ưu tiên bàn có cạnh dài gần phương ngang trong ảnh để giảm nhầm áo người. Với camera xoay hoặc góc nhìn khác, cần điều chỉnh `max_long_edge_angle_degrees` trong cấu hình hoặc căn ROI thủ công.
+
+**Chế độ nhanh** mặc định tắt model gậy thử nghiệm (`cue_enabled=false` trong `configs/vision.toml`), giữ Pose và tracking. Bật lại bằng `cue_enabled=true` rồi khởi động lại; UI báo rõ gậy bị tắt để ưu tiên FPS, không báo mất weights. Model gậy vẫn chưa được kiểm chứng.
+
+**Tăng tốc video/nhận diện:** Windows có GPU DirectX 12 có thể cài thêm `.venv/Scripts/python -m pip install -r requirements-gpu.txt`. Detector ưu tiên ONNX Runtime DirectML, giữ nguyên weights/input 640; thiếu hoặc lỗi GPU thì quay về CPU và báo đúng backend. Trên máy nhiều GPU, `dml_device_id` là chỉ số adapter DirectML, không suy từ chỉ số CUDA. Xem `configs/vision.toml` / env `VISION_CONFIG`: mục tiêu 30 FPS, OpenCV 1 thread, decoder 2 threads, overlay tối đa 960 px, JPEG 75 và phát quan sát vào FSM/SQLite tối đa 5 Hz. Mỗi khung JPEG được cache dùng chung giữa các cửa sổ xem; nén/vẽ được đưa ra khỏi event loop HTTP.
+
+`GET /api/camera/status` báo `fps` khung xử lý thành công, `inference_fps` khung thực sự chạy Pose, `source_fps` FPS danh nghĩa của nguồn và `target_fps`. HUD tách Video/AI FPS; bỏ qua inference khi mọi bàn có phiên thì AI FPS về 0. Phát file được giới hạn theo FPS gốc để giữ đúng tốc độ; clip 19–20 FPS không trở thành 30 FPS mới. Không đếm khung lặp hoặc lần đọc lỗi vào FPS.
+
+Đo khả năng xử lý không giới hạn tốc độ bằng `scripts/benchmark_vision.py VIDEO --zones ZONES --frames 120 --output data/datasets/benchmark.json`; thêm `--opencv-cpu` để đối chiếu. Benchmark gồm decode, Pose, tracking, mapping, overlay/JPEG; thêm `--with-cue` để chạy cả model gậy khi có người; không gồm SQLite/HTTP/trình duyệt và không đo độ chính xác. Cần đo luồng HTTP riêng để kiểm tra trải nghiệm thực tế.
 
 PERSON_AND_CUE luôn yêu cầu kiểm tra thủ công ở Phase 2 kể cả có confidence gậy từ mô phỏng. COCO person detector không phải cue detector. MINI_TABLE không chứng minh khả năng phát hiện người thật.
 
@@ -91,7 +107,7 @@ Chưa có login, phân quyền, audit nhân viên hoặc gateway thanh toán. Ch
 
 SQLite/FSM/WebSocket hiện phục vụ một process; scale nhiều worker cần thiết kế lại đồng bộ. Dashboard chỉ nhận 30 detection events mới nhất; lịch sử session có phân trang. Event log tăng theo số tín hiệu; ngừng bộ phát khi không demo, chưa có retention tự động. Backup file `data/smartbilliard.db` **khi đã dừng API** trước khi thay đổi schema; chưa có migration tự động cho database cũ. Không tự xóa DB để sửa lỗi.
 
-Chưa đo precision/recall, FPS, độ trễ camera, CPU/RAM hoặc khả năng 4–8 bàn. Xem [bằng chứng triển khai](docs/competition/MVP_EVIDENCE.md), [kết quả kiểm thử](docs/testing/TEST_RESULTS.md) và [backlog](docs/planning/TASK_BACKLOG.md). Dừng ở Phase 2 trước khi triển khai camera.
+Chưa nghiệm thu precision/recall, FPS, độ trễ camera, CPU/RAM hoặc khả năng 4–8 bàn ở quán. Xem [bằng chứng triển khai](docs/competition/MVP_EVIDENCE.md), [kết quả kiểm thử](docs/testing/TEST_RESULTS.md) và [backlog](docs/planning/TASK_BACKLOG.md). Báo cáo Phase 0–2 là mốc MVP local; các phần camera/video và model hiện tại vẫn là thử nghiệm, không thay thế kiểm chứng thực địa.
 
 ## Theo dõi phát triển trên GitHub
 
@@ -118,4 +134,10 @@ Tạo gói gán nhãn từ video nhiều camera và gộp kết quả của team
 .\.venv\Scripts\python.exe scripts/build_label_pack.py --source cam-a=PATH --source cam-b=PATH --members 4 --redundancy 2
 .\.venv\Scripts\python.exe scripts/merge_labels.py ket-qua-*.json
 ```
+
+Thêm `--focus walking` để ưu tiên clip có dịch chuyển theo chiều cao người; đây chỉ là cách lấy mẫu, nhãn vẫn cần xem bằng mắt. Tạo lại gói cho các clip thiếu phiếu hợp lệ bằng `scripts/build_review_pack.py` (xem hướng dẫn). File kết quả của các batch khác nhau bị từ chối gộp vì `clip_id` có thể trùng.
+
+Nhãn hành động `WALKING/AIMING/...` không thay thế bounding box gậy. Huấn luyện gậy dùng dataset YOLO riêng và môi trường riêng theo [models/README.md](models/README.md); [báo cáo thử nghiệm](docs/ai/CUE_AND_LABELING_20261120.md) ghi nguồn nhãn và giới hạn.
+
+[Rà soát đã chốt ngày 21/11](docs/ai/LABEL_REVIEW_20261121.md): 100 clip hành động (23 WALKING), 97 ảnh gậy/ảnh âm sau đối chiếu; nhãn AI được đánh dấu nguồn riêng, không gộp thành phiếu người giả. `scripts/finalize_label_review.py` xuất bộ nhãn đã rà soát mà không ghi đè nhãn đồng thuận cũ.
 

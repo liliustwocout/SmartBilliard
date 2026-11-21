@@ -1,0 +1,2 @@
+# Optional Windows GPU backend; base installation continues to work on OpenCV CPU.
+onnxruntime-directml==1.24.4; sys_platform == "win32"

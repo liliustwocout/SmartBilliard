@@ -50,6 +50,7 @@ def draw_frame_annotations(
     summaries: dict[int, TableObservationSummary] | None = None,
     config: CalibrationConfig | None = None,
     fps: float = 0.0,
+    inference_fps: float | None = None,
     source_type: str = "CAMERA",
     camera_id: str = "cam-01",
 ) -> np.ndarray:
@@ -174,7 +175,7 @@ def draw_frame_annotations(
                 cue_count += 1
                 cue_color = (0, 215, 255)
                 cv2.rectangle(annotated, (x1, y1), (x2, y2), cue_color, 2, cv2.LINE_AA)
-                cue_label = f"Gay [{int(det.confidence * 100)}%]"
+                cue_label = f"Gay thu nghiem [{int(det.confidence * 100)}%]"
                 (lw, lh), _ = cv2.getTextSize(cue_label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
                 lbl_y1 = max(0, y1 - lh - 6)
                 cv2.rectangle(annotated, (x1, lbl_y1), (min(width - 1, x1 + lw + 8), y1), (15, 15, 20), -1)
@@ -235,7 +236,8 @@ def draw_frame_annotations(
     cv2.circle(annotated, (16, 14), 5, dot_color, -1, cv2.LINE_AA)
 
     act_count = len(active_tables)
-    hud_text = f"LIVE {source_type} ({camera_id}) | FPS: {fps:.1f} | Nguoi: {person_count} | Gay: {cue_count} | Ban hoat dong: {act_count}"
+    ai_text = f" | AI FPS: {inference_fps:.1f}" if inference_fps is not None else ""
+    hud_text = f"LIVE {source_type} ({camera_id}) | Video FPS: {fps:.1f}{ai_text} | Nguoi: {person_count} | Gay: {cue_count} | Ban hoat dong: {act_count}"
     cv2.putText(annotated, hud_text, (28, 19), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (230, 235, 240), 1, cv2.LINE_AA)
 
     # Right HUD clock hint

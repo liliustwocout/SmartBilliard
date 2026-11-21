@@ -9,6 +9,7 @@ Features:
 from __future__ import annotations
 
 import logging
+from collections import deque
 import threading
 import time
 from pathlib import Path
@@ -24,6 +25,7 @@ from services.vision.detector import YoloCueDetector, YoloPoseDetector
 from services.vision.mapper import TableObservationSummary, TableZoneMapper
 from services.vision.pipeline import VisionPipeline
 from services.vision.tracker import ByteTracker
+from services.vision.performance import VisionPerformanceConfig
 
 logger = logging.getLogger("smartbilliard.vision.runner")
 
@@ -53,7 +55,8 @@ class CameraRunner:
         fallback_model_path: str | Path = "models/yolov8n.onnx",
         cue_model_path: str | Path = "models/yolov8n-cue.onnx",
         prefer_gpu: bool = True,
-        target_fps: float = 8.0,
+        target_fps: float | None = None,
+        performance: VisionPerformanceConfig | None = None,
         on_observation: ObservationCallback | None = None,
     ) -> None:
         self.source_spec = source
@@ -64,13 +67,17 @@ class CameraRunner:
         self.fallback_model_path = Path(fallback_model_path)
         self.cue_model_path = Path(cue_model_path)
         self.prefer_gpu = prefer_gpu
-        self.target_fps = target_fps
+        self.performance = performance or VisionPerformanceConfig()
+        self.target_fps = target_fps if target_fps is not None else self.performance.target_fps
         self.on_observation = on_observation
 
         self._pipeline: VisionPipeline | None = None
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
+        self._jpeg_lock = threading.Lock()
+        self._jpeg_cache: dict[bool, tuple[tuple[int, int], bytes]] = {}
+        self._frame_sequence = 0
 
         self.source_type = _infer_source_type(source)
 
@@ -80,6 +87,7 @@ class CameraRunner:
         self._latest_detections: list[Detection] = []
         self._latest_summaries: dict[int, TableObservationSummary] = {}
         self._fps_measured: float = 0.0
+        self._inference_fps_measured: float = 0.0
         self._calibration_cfg: CalibrationConfig | None = None
         self._paused_tables: frozenset[int] = frozenset()
 
@@ -117,6 +125,15 @@ class CameraRunner:
         return self._fps_measured
 
     @property
+    def inference_fps(self) -> float:
+        return self._inference_fps_measured
+
+    @property
+    def source_fps(self) -> float:
+        with self._lock:
+            return float(getattr(self._pipeline.source, "fps", 0)) if self._pipeline else 0.0
+
+    @property
     def cue_detector_ready(self) -> bool:
         with self._lock:
             if self._pipeline and self._pipeline.cue_detector:
@@ -147,39 +164,43 @@ class CameraRunner:
             return self._latest_frame.copy() if self._latest_frame is not None else None
 
     def get_latest_frame_jpeg(self) -> bytes | None:
-        with self._lock:
-            if self._latest_frame is None:
-                return None
-            import cv2
-            ok, buf = cv2.imencode(".jpg", self._latest_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
-            return buf.tobytes() if ok else None
+        return self.get_stream_frame(annotated=False)[1]
 
     def get_annotated_frame_jpeg(self) -> bytes | None:
-        """Render AI detections, tracking IDs, and ROI zones onto latest frame as JPEG."""
-        with self._lock:
-            if self._latest_frame is None:
-                return None
-            frame = self._latest_frame.copy()
-            detections = list(self._latest_detections)
-            summaries = dict(self._latest_summaries)
-            cfg = self._calibration_cfg
-            fps = self._fps_measured
-            src_type = self.source_type
-            cam_id = self.camera_id
+        return self.get_stream_frame(annotated=True)[1]
 
-        from services.vision.annotator import draw_frame_annotations
-        annotated = draw_frame_annotations(
-            frame=frame,
-            detections=detections,
-            summaries=summaries,
-            config=cfg,
-            fps=fps,
-            source_type=src_type,
-            camera_id=cam_id,
-        )
+    def get_stream_frame(self, annotated: bool = True) -> tuple[int, bytes | None]:
+        """Encode each processed frame once per mode, shared by all viewers."""
         import cv2
-        ok, buf = cv2.imencode(".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-        return buf.tobytes() if ok else None
+        from services.vision.annotator import draw_frame_annotations
+
+        with self._jpeg_lock:
+            with self._lock:
+                sequence = self._frame_sequence
+                if self._latest_frame is None:
+                    return sequence, None
+                key = (sequence, id(self._calibration_cfg))
+                cached = self._jpeg_cache.get(annotated)
+                if cached and cached[0] == key:
+                    return sequence, cached[1]
+                frame = self._latest_frame.copy()
+                detections = list(self._latest_detections)
+                summaries = dict(self._latest_summaries)
+                cfg = self._calibration_cfg
+                fps, ai_fps = self._fps_measured, self._inference_fps_measured
+            if annotated:
+                if frame.shape[1] > self.performance.preview_width:
+                    scale = self.performance.preview_width / frame.shape[1]
+                    frame = cv2.resize(frame, (self.performance.preview_width, round(frame.shape[0] * scale)))
+                frame = draw_frame_annotations(frame=frame, detections=detections, summaries=summaries,
+                                               config=cfg, fps=fps, inference_fps=ai_fps,
+                                               source_type=self.source_type, camera_id=self.camera_id)
+            quality = self.performance.jpeg_quality if annotated else 85
+            ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+            data = buf.tobytes() if ok else None
+            if data is not None:
+                self._jpeg_cache[annotated] = (key, data)
+            return sequence, data
 
     def reload_calibration_config(self) -> None:
         """Hot-reload zone configuration into active pipeline without restarting."""
@@ -205,8 +226,11 @@ class CameraRunner:
 
             logger.info("Starting CameraRunner for source %s (%s)", self.source_spec, self.source_type)
             try:
+                import cv2
+                cv2.setNumThreads(self.performance.opencv_threads)
                 # 1. Initialize VideoSource
-                video_src = create_video_source(self.source_spec, camera_id=self.camera_id, loop=True)
+                source_options = {"decoder_threads": self.performance.decoder_threads} if self.source_type == "VIDEO" else {}
+                video_src = create_video_source(self.source_spec, camera_id=self.camera_id, loop=True, **source_options)
 
                 # 2. Initialize calibration mapper
                 calibration_cfg = load_calibration_config(self.zones_config_path, self.fallback_zones_path)
@@ -218,10 +242,13 @@ class CameraRunner:
                     model_path=self.model_path,
                     fallback_model_path=self.fallback_model_path,
                     prefer_gpu=self.prefer_gpu,
+                    dml_device_id=self.performance.dml_device_id,
                 )
                 cue_detector = YoloCueDetector(
                     model_path=self.cue_model_path,
                     prefer_gpu=self.prefer_gpu,
+                    dml_device_id=self.performance.dml_device_id,
+                    enabled=self.performance.cue_enabled,
                 )
                 tracker = ByteTracker()
 
@@ -239,6 +266,10 @@ class CameraRunner:
                 return False
 
             self._stop_event.clear()
+            self._latest_frame = None
+            self._latest_detections = []
+            self._latest_summaries = {}
+            self._fps_measured = self._inference_fps_measured = 0.0
             self._thread = threading.Thread(target=self._run_loop, daemon=True, name="CameraRunnerThread")
             self._thread.start()
             self._status = "RUNNING"
@@ -259,6 +290,7 @@ class CameraRunner:
                     pass
                 self._pipeline = None
             self._status = "STOPPED"
+            self._fps_measured = self._inference_fps_measured = 0.0
             logger.info("CameraRunner stopped")
 
     def configure_source(self, new_source: str | int) -> bool:
@@ -284,11 +316,16 @@ class CameraRunner:
 
     def _run_loop(self) -> None:
         """Main loop running in background thread."""
-        interval = 1.0 / max(1.0, self.target_fps)
-        frame_times: list[float] = []
+        rate = self.target_fps
+        if self.source_type == "VIDEO" and self.source_fps > 0:
+            rate = min(rate, self.source_fps)
+        interval = 1.0 / max(1.0, rate)
+        frame_times: deque[float] = deque(maxlen=60)
+        inference_times: deque[float] = deque(maxlen=60)
+        last_emit = float("-inf")
 
         while not self._stop_event.is_set():
-            loop_start = time.monotonic()
+            loop_start = time.perf_counter()
             now_ts = time.time()
 
             try:
@@ -299,31 +336,43 @@ class CameraRunner:
                     summaries = {tid: item for tid, item in summaries.items() if tid not in paused}
                     with self._lock:
                         if ok and frame is not None:
+                            self._frame_sequence += 1
                             self._latest_frame = frame
                             self._latest_detections = detections
                             self._latest_summaries = summaries
                             self._last_processed_time = now_ts
 
+                    if not ok or frame is None:
+                        self._fps_measured = self._inference_fps_measured = 0.0
+                    else:
+                        now_mono = time.perf_counter()
+                        frame_times.append(now_mono)
+                        if len(frame_times) >= 2:
+                            self._fps_measured = (len(frame_times) - 1) / max(1e-6, frame_times[-1] - frame_times[0])
+                        if not self._pipeline.inference_skipped and self._pipeline.detector.is_ready:
+                            inference_times.append(now_mono)
+                            if len(inference_times) >= 2:
+                                self._inference_fps_measured = (len(inference_times) - 1) / max(1e-6, inference_times[-1] - inference_times[0])
+                        else:
+                            inference_times.clear()
+                            self._inference_fps_measured = 0.0
+
                     # Emit observations to callback
-                    if ok and self.on_observation and summaries:
+                    if ok and self.on_observation and summaries and loop_start - last_emit >= 1 / self.performance.observation_fps:
+                        last_emit = loop_start
                         for table_id, summary in summaries.items():
                             try:
                                 self.on_observation(table_id, summary, self.source_type)
                             except Exception as cb_err:
                                 logger.error("Error in on_observation callback: %s", cb_err)
 
-                # Measure FPS
-                now_mono = time.monotonic()
-                frame_times.append(now_mono)
-                if len(frame_times) > 10:
-                    frame_times.pop(0)
-                if len(frame_times) >= 2:
-                    self._fps_measured = (len(frame_times) - 1) / (frame_times[-1] - frame_times[0])
-
             except Exception as err:
+                self._fps_measured = self._inference_fps_measured = 0.0
                 logger.error("Error in CameraRunner processing loop: %s", err)
 
-            elapsed = time.monotonic() - loop_start
+            elapsed = time.perf_counter() - loop_start
             sleep_time = interval - elapsed
             if sleep_time > 0:
-                self._stop_event.wait(timeout=sleep_time)
+                # Python 3.11 sleep uses a high-resolution Windows waitable timer;
+                # Event.wait can round these short waits to a ~16 ms system tick.
+                time.sleep(sleep_time)

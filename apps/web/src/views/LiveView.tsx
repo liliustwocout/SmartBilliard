@@ -88,7 +88,7 @@ export function LiveView({
             </div>
             <div>
               <dt>Model gậy</dt>
-              <dd>{data.model_status.cue.loaded ? `${data.model_status.cue.name} · ${data.model_status.cue.backend} (chưa kiểm chứng)` : 'Chưa nạp weights gậy'}</dd>
+              <dd>{data.model_status.cue.backend === 'DISABLED' ? 'Đã tắt để ưu tiên FPS (chế độ nhanh)' : data.model_status.cue.loaded ? `${data.model_status.cue.name} · ${data.model_status.cue.backend} (chưa kiểm chứng)` : 'Chưa nạp weights gậy'}</dd>
             </div>
           </dl>
 
