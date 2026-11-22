@@ -35,3 +35,16 @@ export async function fetchHealth(timeoutMs = 5000): Promise<Health> {
   if (body.app !== 'manage') throw new Error('Đang kết nối nhầm máy chủ (không phải phòng quản lý)');
   return body;
 }
+
+export interface VenueSummary {
+  id: number; name: string; slug: string; status: 'ACTIVE' | 'SUSPENDED'; created_at: string;
+  counts: { owners: number; staff: number; customers: number };
+  owner: { id: number; login: string; display_name: string; status: string; must_change_password: boolean } | null;
+}
+export interface Page<T> { total: number; items: T[] }
+export interface CustomerRow { id: number; login: string; display_name: string; status: 'ACTIVE' | 'DISABLED'; created_at: string }
+export interface AuditRow {
+  id: number; at: string; actor_user_id: number | null; actor_login: string | null; venue_id: number | null; action: string; target: string | null; detail: Record<string, unknown>;
+}
+export interface Overview { venues: { active: number; suspended: number }; users: { owner: number; staff: number; customer: number } }
+export interface CreatedVenue { venue: VenueSummary; owner_temp_password: string }

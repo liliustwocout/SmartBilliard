@@ -14,8 +14,10 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse
 
 from apps.manage_api.config import ManageSettings
+from apps.manage_api.admin import build_admin
 from apps.manage_api.auth import Principal, build_auth
-from apps.manage_api.models import AuditLog, Base, Venue
+from apps.manage_api.textutil import fold
+from apps.manage_api.models import AuditLog, Base, User, Venue
 
 
 def create_app(settings: ManageSettings | None = None,
@@ -33,6 +35,7 @@ def create_app(settings: ManageSettings | None = None,
     def sqlite_setup(connection, _):
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA busy_timeout=5000")
+        connection.create_function("fold", 1, fold, deterministic=True)
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -59,6 +62,7 @@ def create_app(settings: ManageSettings | None = None,
 
     auth_router, current_principal, require_roles, venue_scope = build_auth(get_db, clock, settings.cookie_secure)
     app.include_router(auth_router)
+    app.include_router(build_admin(get_db, require_roles, clock))
     app.state.clock = clock
 
     @app.get("/api/venues/{venue_id}")
@@ -72,8 +76,10 @@ def create_app(settings: ManageSettings | None = None,
     @app.get("/api/admin/audit")
     def admin_audit(_: Annotated[Principal, Depends(require_roles("platform_admin"))],
                     db: Annotated[Session, Depends(get_db)], limit: int = 100):
-        rows = db.scalars(select(AuditLog).order_by(AuditLog.id.desc()).limit(max(1, min(limit, 500))))
-        return [{"id": r.id, "at": r.at.isoformat() + "Z", "actor_user_id": r.actor_user_id, "venue_id": r.venue_id,
+        rows = db.scalars(select(AuditLog).order_by(AuditLog.id.desc()).limit(max(1, min(limit, 500)))).all()
+        logins = dict(db.execute(select(User.id, User.login).where(User.id.in_({r.actor_user_id for r in rows if r.actor_user_id}))).all())
+        return [{"id": r.id, "at": r.at.isoformat() + "Z", "actor_user_id": r.actor_user_id,
+                 "actor_login": logins.get(r.actor_user_id), "venue_id": r.venue_id,
                  "action": r.action, "target": r.target, "detail": r.detail} for r in rows]
 
     @app.get("/api/health")

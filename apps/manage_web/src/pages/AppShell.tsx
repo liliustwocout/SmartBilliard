@@ -5,11 +5,26 @@ import { Button } from '../ui/components';
 import { BrandBall } from '../ui/FeltTable';
 import { ThemeToggle } from '../ui/ThemeToggle';
 
-export type Route = '/' | '/design';
+export type Route =
+  | { name: 'home' } | { name: 'venues' } | { name: 'venue'; id: number } | { name: 'audit' } | { name: 'design' };
 
-const NAV: Array<{ path: Route; label: string; devOnly?: boolean }> = [
-  { path: '/', label: 'Tổng quan bàn' },
-  { path: '/design', label: 'Giao diện mẫu', devOnly: true },
+export function parseRoute(hash: string, dev = import.meta.env.DEV): Route {
+  const path = hash.replace(/^#/, '');
+  if (path === '/venues') return { name: 'venues' };
+  const venue = /^\/venues\/(\d+)$/.exec(path);
+  if (venue) return { name: 'venue', id: Number(venue[1]) };
+  if (path === '/audit') return { name: 'audit' };
+  if (dev && path === '/design') return { name: 'design' };
+  return { name: 'home' };
+}
+
+interface NavItem { href: string; label: string; active: (route: Route) => boolean; roles?: Role[]; devOnly?: boolean }
+
+const NAV: NavItem[] = [
+  { href: '#/', label: 'Tổng quan', active: r => r.name === 'home' },
+  { href: '#/venues', label: 'Quán', roles: ['platform_admin'], active: r => r.name === 'venues' || r.name === 'venue' },
+  { href: '#/audit', label: 'Nhật ký', roles: ['platform_admin'], active: r => r.name === 'audit' },
+  { href: '#/design', label: 'Giao diện mẫu', devOnly: true, active: r => r.name === 'design' },
 ];
 
 export const ROLE_LABEL: Record<Role, string> = {
@@ -19,13 +34,14 @@ export const ROLE_LABEL: Record<Role, string> = {
 export function AppShell({ route, children }: { route: Route; children: ReactNode }) {
   const { state, logout } = useAuth();
   const user = state.status === 'ready' ? state.user : null;
+  const items = NAV.filter(item => (!item.devOnly || import.meta.env.DEV) && (!item.roles || (user && item.roles.includes(user.role))));
   return (
     <div className="shell">
       <aside className="sidebar">
         <div className="brand"><BrandBall />SmartBilliard</div>
         <nav className="nav" aria-label="Điều hướng chính">
-          {NAV.filter(item => !item.devOnly || import.meta.env.DEV).map(item => (
-            <a key={item.path} href={`#${item.path}`} aria-current={route === item.path ? 'page' : undefined}>{item.label}</a>
+          {items.map(item => (
+            <a key={item.href} href={item.href} aria-current={item.active(route) ? 'page' : undefined}>{item.label}</a>
           ))}
         </nav>
         <div className="sidebar-foot">
