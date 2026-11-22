@@ -171,11 +171,17 @@ const STATE_LABEL: Record<FeltState, { text: string; tone: 'ok' | 'warn' | 'info
 };
 
 /** Thẻ bàn: giá trị đồng hồ/tiền do backend cung cấp, thẻ chỉ hiển thị. */
-export function TableCard({ name, state, clock, amount, rate, actions }:
-  { name: string; state: FeltState; clock?: string; amount?: string; rate: string; actions?: ReactNode }) {
+export function TableCard({ name, state, clock, amount, rate, actions, onOpen }:
+  { name: string; state: FeltState; clock?: string; amount?: string; rate: string; actions?: ReactNode; onOpen?: () => void }) {
   const label = STATE_LABEL[state];
+  const inButton = (target: EventTarget) => (target as HTMLElement).closest?.('button, a, input, select');
   return (
-    <article className="table-card" data-state={state} aria-label={`${name}: ${label.text}`}>
+    <article className="table-card" data-state={state} aria-label={`${name}: ${label.text}`}
+      {...(onOpen ? {
+        role: 'group', tabIndex: 0, style: { cursor: 'pointer' }, title: 'Xem chi tiết bàn',
+        onClick: (e: React.MouseEvent) => { if (!inButton(e.target)) onOpen(); },
+        onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter' && e.target === e.currentTarget) onOpen(); },
+      } : {})}>
       <header><h3>{name}</h3><Badge tone={label.tone}>{label.text}</Badge></header>
       <FeltTable state={state} title={`Mặt ${name.toLowerCase()}`} />
       {state === 'playing' && clock ? (

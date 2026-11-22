@@ -184,4 +184,21 @@ describe('audit page', () => {
     expect(screen.getByText('bi-a-dai-nam')).toBeTruthy();
     expect(screen.getByText('admin')).toBeTruthy();
   });
+
+  it('sends the chosen filters to the server and can clear them', async () => {
+    window.location.hash = '#/audit';
+    const calls = mock([['GET /api/auth/me', () => json(admin)],
+      ['GET /api/admin/venues', () => json({ total: 1, items: [{ id: 7, name: 'Bi-a Đại Nam', slug: 'bi-a-dai-nam', status: 'ACTIVE', created_at: 't', counts: { owners: 1, staff: 0, customers: 0 }, owner: null }] })],
+      ['GET /api/admin/audit', () => json([])]]);
+    render(<App />);
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Hành động' }), { target: { value: 'thanh toan' } }); // gõ không dấu vẫn tìm ra
+    fireEvent.mouseDown(screen.getByRole('option', { name: 'Thanh toán phiên' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Quán' }), { target: { value: 'dai nam' } });
+    fireEvent.mouseDown(await screen.findByRole('option', { name: /Bi-a Đại Nam/ }));
+    fireEvent.change(screen.getByLabelText('Từ ngày'), { target: { value: '2026-11-01' } });
+    await waitFor(() => expect(calls.some(c => c.key.includes('action=session_paid') && c.key.includes('venue_id=7') && c.key.includes('date_from=2026-11-01'))).toBe(true));
+    expect(await screen.findByText('Không có hoạt động khớp')).toBeTruthy();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Xoá bộ lọc' })[0]);
+    await waitFor(() => expect((screen.getByRole('combobox', { name: 'Hành động' }) as HTMLInputElement).value).toBe('Tất cả hành động'));
+  });
 });

@@ -44,7 +44,7 @@ export interface VenueSummary {
 export interface Page<T> { total: number; items: T[] }
 export interface CustomerRow { id: number; login: string; display_name: string; status: 'ACTIVE' | 'DISABLED'; created_at: string }
 export interface AuditRow {
-  id: number; at: string; actor_user_id: number | null; actor_login: string | null; venue_id: number | null; action: string; target: string | null; detail: Record<string, unknown>;
+  id: number; at: string; actor_user_id: number | null; actor_login: string | null; venue_id: number | null; venue_name?: string | null; action: string; target: string | null; detail: Record<string, unknown>;
 }
 export interface Overview { venues: { active: number; suspended: number }; users: { owner: number; staff: number; customer: number } }
 export interface CreatedVenue { venue: VenueSummary; owner_temp_password: string }
@@ -88,7 +88,7 @@ export interface MySession { id: string; table_name: string | null; started_at: 
 export interface PublicVenue { name: string; slug: string }
 
 export type PrizeKind = 'points' | 'discount_vnd' | 'free_minutes' | 'nothing';
-export interface WheelPrizePublic { id: number; name: string; kind: PrizeKind; value: number; percent: number }
+export interface WheelPrizePublic { id: number; name: string; kind: PrizeKind; value: number }
 export interface VoucherView { id: number; code: string; label: string; kind: 'discount_vnd' | 'free_minutes'; value: number; expires_at: string }
 export interface GameState {
   points: number; level: { name: string; next_at: number | null }; streak: number; best_streak: number; checked_in_today: boolean;

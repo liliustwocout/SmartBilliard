@@ -37,9 +37,9 @@ const bodyOf = (calls: Array<{ key: string; init?: RequestInit }>, key: string) 
 
 const days = Array.from({ length: 14 }, (_, i) => ({ day: `2026-11-${String(9 + i).padStart(2, '0')}`, checked: i >= 11 }));
 const prizes = [
-  { id: 1, name: '+20 điểm', kind: 'points' as const, value: 20, percent: 40 },
-  { id: 2, name: 'Giảm 10.000₫', kind: 'discount_vnd' as const, value: 10000, percent: 10 },
-  { id: 3, name: 'Chúc may mắn', kind: 'nothing' as const, value: 0, percent: 50 },
+  { id: 1, name: '+20 điểm', kind: 'points' as const, value: 20 },
+  { id: 2, name: 'Giảm 10.000₫', kind: 'discount_vnd' as const, value: 10000 },
+  { id: 3, name: 'Chúc may mắn', kind: 'nothing' as const, value: 0 },
 ];
 const game: GameState = {
   points: 130, level: { name: 'Bạc', next_at: 500 }, streak: 3, best_streak: 5, checked_in_today: false, checkin_mode: 'wifi', checkin_points: 10, needs_code: false,
@@ -55,17 +55,21 @@ describe('helpers and routes', () => {
     expect(toBp('12.5')).toBe(1250);
     expect(toBp('0.07')).toBe(7);
     expect(totalBp([{ name: 'a', kind: 'points', value: '1', percent: '33.33', stock: '', days: '30' }, { name: 'b', kind: 'nothing', value: '0', percent: '66.67', stock: '', days: '30' }])).toBe(10000);
-    expect(parseRoute('#/my/rewards')).toEqual({ name: 'my-rewards' });
+    expect(parseRoute('#/my/spin')).toEqual({ name: 'my-spin' });
+    expect(parseRoute('#/my/wallet')).toEqual({ name: 'my-wallet' });
+    expect(parseRoute('#/my/profile')).toEqual({ name: 'my-profile' });
+    expect(parseRoute('#/my/book')).toEqual({ name: 'my-book' });
     expect(parseRoute('#/game')).toEqual({ name: 'game' });
     expect(parseRoute('#/checkin-code')).toEqual({ name: 'checkin-code' });
   });
 });
 
-describe('customer rewards page', () => {
-  beforeEach(() => { window.location.hash = '#/my/rewards'; });
+describe('customer home page', () => {
+  beforeEach(() => { window.location.hash = '#/'; });
+  const bookingsMock: Route = ['GET /api/venues/1/my/bookings', () => json([])];
 
-  it('shows points, level, streak, calendar, odds and vouchers', async () => {
-    mock([me, ['GET /api/venues/1/my/game', () => json(game)]]);
+  it('shows points, level, streak and the check-in rack on the member card', async () => {
+    mock([me, bookingsMock, ['GET /api/venues/1/my/game', () => json(game)]]);
     render(<App />);
     expect((await screen.findByTestId('points')).textContent).toBe('130');
     expect(screen.getByText('Hạng Bạc')).toBeTruthy();
@@ -73,28 +77,26 @@ describe('customer rewards page', () => {
     expect(screen.getByText(/Check-in 7 ngày liên tiếp để nhận thêm \+50 điểm/)).toBeTruthy();
     expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('26');
     expect(screen.getAllByLabelText(/đã check-in/).length).toBe(3);
-    expect(screen.getByText('Quán đảm bảo mỗi ngày có phần thưởng cho khách quay. Phần thưởng chỉ dùng tại quán, không quy đổi thành tiền.')).toBeTruthy();
-    expect(screen.getByText('40%')).toBeTruthy();
-    expect(screen.getByTestId('voucher-code').textContent).toBe('ABCD2345');
-    expect(screen.getByRole('link', { name: 'Quà tặng' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('link', { name: /Trang chủ/ }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByText('Lượt quay').closest('a')?.textContent).toContain('1');
   });
 
   it('checks in, shows the server error when not on the venue wifi, and shows the done state', async () => {
-    const calls = mock([me, ['GET /api/venues/1/my/game', () => json(game)],
+    const calls = mock([me, bookingsMock, ['GET /api/venues/1/my/game', () => json(game)],
       ['POST /api/venues/1/my/checkin', () => json({ detail: 'Bạn cần kết nối wifi của quán để check-in.' }, 403)]]);
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: /Check-in \(\+10 điểm\)/ }));
     expect(await screen.findByText('Bạn cần kết nối wifi của quán để check-in.')).toBeTruthy();
     expect(bodyOf(calls, 'POST /api/venues/1/my/checkin')).toEqual({ code: null });
     cleanup();
-    mock([me, ['GET /api/venues/1/my/game', () => json({ ...game, checked_in_today: true })]]);
+    mock([me, bookingsMock, ['GET /api/venues/1/my/game', () => json({ ...game, checked_in_today: true })]]);
     render(<App />);
     expect(await screen.findByText(/Bạn đã check-in hôm nay/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Check-in \(\+10/ })).toBeNull();
   });
 
   it('asks for the counter code in code mode and sends it upper-cased', async () => {
-    const calls = mock([me, ['GET /api/venues/1/my/game', () => json({ ...game, checkin_mode: 'code', needs_code: true })],
+    const calls = mock([me, bookingsMock, ['GET /api/venues/1/my/game', () => json({ ...game, checkin_mode: 'code', needs_code: true })],
       ['POST /api/venues/1/my/checkin', () => json({ already_checked_in: false, points_added: 10, streak: 4, ticket_id: 42 })]]);
     render(<App />);
     fireEvent.change(await screen.findByLabelText('Mã check-in tại quầy'), { target: { value: 'ab3k9z' } });
@@ -102,6 +104,11 @@ describe('customer rewards page', () => {
     await waitFor(() => expect(bodyOf(calls, 'POST /api/venues/1/my/checkin')).toEqual({ code: 'AB3K9Z' }));
     expect(await screen.findByText(/Check-in thành công: \+10 điểm và 1 lượt quay/)).toBeTruthy();
   });
+
+});
+
+describe('customer spin page', () => {
+  beforeEach(() => { window.location.hash = '#/my/spin'; });
 
   it('spins using the server result: the wheel lands on the server index and the prize is revealed', async () => {
     const calls = mock([me, ['GET /api/venues/1/my/game', () => json(game)],
@@ -132,7 +139,46 @@ describe('customer rewards page', () => {
     expect(await screen.findByText('Vòng quay của quán đang tạm tắt.')).toBeTruthy();
   });
 
+  it('never reveals win odds to the customer', async () => {
+    mock([me, ['GET /api/venues/1/my/game', () => json(game)]]);
+    render(<App />);
+    await screen.findByRole('button', { name: 'Quay (1 lượt)' });
+    expect(screen.queryByText(/tỷ lệ/i)).toBeNull();
+    expect(screen.queryByText(/%/)).toBeNull();
+    expect(screen.queryByText(/đảm bảo mỗi ngày/i)).toBeNull();
+  });
+});
+
+describe('customer wallet page', () => {
+  beforeEach(() => { window.location.hash = '#/my/wallet'; });
+
+  it('lists vouchers with their codes and the points history', async () => {
+    mock([me, ['GET /api/venues/1/my/game', () => json(game)]]);
+    render(<App />);
+    expect((await screen.findByTestId('voucher-code')).textContent).toBe('ABCD2345');
+    fireEvent.click(screen.getByRole('tab', { name: 'Lịch sử điểm' }));
+    expect(screen.getByText('Check-in')).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Ví/ }).getAttribute('aria-current')).toBe('page');
+  });
+});
+
+describe('customer profile page', () => {
+  it('shows the account and changes the password with the server error surfaced', async () => {
+    window.location.hash = '#/my/profile';
+    const calls = mock([me, ['GET /api/venues/1/my/game', () => json(game)], ['POST /api/auth/change-password', () => json({ detail: 'Mật khẩu hiện tại không đúng.' }, 400)]]);
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: 'Anh Nam' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Đổi mật khẩu' }));
+    fireEvent.change(screen.getByLabelText('Mật khẩu hiện tại'), { target: { value: 'sai-mat-khau' } });
+    fireEvent.change(screen.getByLabelText('Mật khẩu mới'), { target: { value: 'Mat-Khau-Moi-2026' } });
+    fireEvent.change(screen.getByLabelText('Nhập lại mật khẩu mới'), { target: { value: 'Mat-Khau-Moi-2026' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Lưu mật khẩu mới' }));
+    expect(await screen.findByText('Mật khẩu hiện tại không đúng.')).toBeTruthy();
+    expect(bodyOf(calls, 'POST /api/auth/change-password')).toMatchObject({ current_password: 'sai-mat-khau' });
+  });
+
   it('shows the server message when a ticket cannot be spun', async () => {
+    window.location.hash = '#/my/spin';
     mock([me, ['GET /api/venues/1/my/game', () => json(game)], ['POST /api/venues/1/my/spins/41/spin', () => json({ detail: 'Lượt quay đã hết hạn.' }, 409)]]);
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: 'Quay (1 lượt)' }));
@@ -244,7 +290,7 @@ describe('voucher at checkout', () => {
       ['POST /api/venues/1/sessions/sess-1/checkout', () => json({ ...session, status: 'PAID', amount_vnd: 50000, amount_due: 50000 })]]);
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: 'Tính tiền' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Tính tiền Bàn 2' });
+    const dialog = await screen.findByRole('dialog', { name: 'Chi tiết Bàn 2' });
     await within(dialog).findByTestId('quote-amount');
     fireEvent.change(within(dialog).getByLabelText('Voucher của khách'), { target: { value: '5' } });
     await waitFor(() => expect(within(dialog).getByTestId('voucher-discount').textContent).toContain('10.000'));

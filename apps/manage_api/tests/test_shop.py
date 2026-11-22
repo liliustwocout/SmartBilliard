@@ -267,7 +267,8 @@ def test_create_customer_who_can_log_in_through_the_venue_page(p):
     login_response = TestClient(p["app"], base_url="http://127.0.0.1").post(
         "/api/auth/login", json={"login": "0912345678", "password": body["temp_password"], "venue_slug": "quan-a"})
     assert login_response.status_code == 200 and login_response.json()["role"] == "customer"
-    assert body["temp_password"] not in p["staff"].get(url(p, "/customers")).text
+    assert body["temp_password"] == "1234567890"  # mật khẩu gốc của khách quầy tạo
+    assert login_response.json()["must_change_password"] is True  # phải đổi ngay lần đăng nhập đầu
 
 
 def test_customer_list_search_and_isolation(p):
@@ -310,3 +311,50 @@ def test_attach_customer_to_a_running_session(p):
     assert p["staff"].patch(path, json={"customer_id": None}).status_code == 409
     invoice = p["staff"].get(url(p, f"/sessions/{session['id']}/invoice")).json()
     assert invoice["customer"] == "Khách A"
+
+
+def test_owner_can_backdate_session_start_but_staff_cannot_and_limits_apply(p):
+    session = open_session(p)
+    path = url(p, f"/sessions/{session['id']}/start")
+    earlier = (START - timedelta(minutes=45)).isoformat()
+    assert p["staff"].patch(path, json={"started_at": earlier}).status_code == 403
+    assert p["owner_b"].patch(path.replace(str(p["a"]), str(p["b"])), json={"started_at": earlier}).status_code in (403, 404)
+    assert p["owner"].patch(path, json={"started_at": (START + timedelta(minutes=1)).isoformat()}).status_code == 400
+    assert p["owner"].patch(path, json={"started_at": (START - timedelta(hours=25)).isoformat()}).status_code == 400
+    response = p["owner"].patch(path, json={"started_at": earlier})
+    assert response.status_code == 200, response.text
+    assert response.json()["elapsed_seconds"] == 45 * 60
+    assert response.json()["started_at"].startswith("2026-11-22T02:15:00")
+    with Session(p["app"].state.engine) as db:
+        assert db.scalar(select(func.count()).select_from(AuditLog).where(AuditLog.action == "session_start_changed")) == 1
+    assert checkout(p, session["id"]).json()["billable_minutes"] == 45
+    assert p["owner"].patch(path, json={"started_at": earlier}).status_code == 409  # đã thanh toán
+
+
+def test_owner_resets_customer_password_to_default_and_forces_change(p):
+    made = p["staff"].post(url(p, "/customers"), json={"display_name": "Anh Nam", "phone": "0912345678"}).json()["customer"]
+    guest = TestClient(p["app"], base_url="http://127.0.0.1")
+    login = lambda pw: guest.post("/api/auth/login", json={"login": "0912345678", "password": pw, "venue_slug": "quan-a"})
+    first = login("1234567890").json()
+    guest.headers["X-CSRF-Token"] = first["csrf_token"]
+    assert guest.post("/api/auth/change-password", json={"current_password": "1234567890", "new_password": "Mat-Khau-Moi-2026"}).status_code == 200
+    assert login("1234567890").status_code == 401
+    path = url(p, f"/customers/{made['id']}/reset-password")
+    assert p["staff"].post(path).status_code == 403
+    assert p["owner_b"].post(path.replace(f"/venues/{p['a']}/", f"/venues/{p['b']}/")).status_code == 404
+    reset = p["owner"].post(path)
+    assert reset.status_code == 200 and reset.json()["temp_password"] == "1234567890"
+    after = login("1234567890")
+    assert after.status_code == 200 and after.json()["must_change_password"] is True
+    assert login("Mat-Khau-Moi-2026").status_code == 401
+
+
+def test_counter_can_choose_the_initial_customer_password(p):
+    ok = p["staff"].post(url(p, "/customers"), json={"display_name": "A", "phone": "0911111111", "password": "Mat-Khau-Tam-1"})
+    assert ok.status_code == 201 and ok.json()["temp_password"] == "Mat-Khau-Tam-1"
+    guest = TestClient(p["app"], base_url="http://127.0.0.1")
+    first = guest.post("/api/auth/login", json={"login": "0911111111", "password": "Mat-Khau-Tam-1", "venue_slug": "quan-a"}).json()
+    assert first["must_change_password"] is True
+    assert p["staff"].post(url(p, "/customers"), json={"display_name": "B", "phone": "0922222222", "password": "abc"}).status_code == 400
+    blank = p["staff"].post(url(p, "/customers"), json={"display_name": "C", "phone": "0933333333", "password": ""})
+    assert blank.json()["temp_password"] == "1234567890"

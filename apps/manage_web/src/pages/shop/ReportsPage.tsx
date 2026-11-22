@@ -28,7 +28,7 @@ const GROUP_TABS: Array<{ id: Group; label: string }> = [{ id: 'day', label: 'Th
 const PRESETS: Array<{ id: Preset; label: string }> = [{ id: 'today', label: 'Hôm nay' }, { id: '7d', label: '7 ngày' }, { id: '30d', label: '30 ngày' }, { id: 'month', label: 'Tháng này' }, { id: 'custom', label: 'Tuỳ chọn' }];
 
 function Stat({ label, value, testId }: { label: string; value: string; testId?: string }) {
-  return <Card flat><div className="muted">{label}</div><div className="num stat" data-testid={testId} style={{ fontSize: 'var(--text-2xl)' }}>{value}</div></Card>;
+  return <Card flat><div className="muted">{label}</div><div className="num stat" data-testid={testId} style={{ fontSize: 'var(--text-xl)' }}>{value}</div></Card>;
 }
 
 export function ReportsPage() {
@@ -70,7 +70,7 @@ export function ReportsPage() {
           <Card><EmptyState title="Chưa có doanh thu trong khoảng này" description="Phiên đã thanh toán sẽ hiện ở đây. Thử chọn khoảng thời gian dài hơn." /></Card>
         ) : (
           <>
-            <div className="grid-cards">
+            <div className="grid-cards" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 'var(--space-3)' }}>
               <Stat label="Doanh thu" value={money(data.totals.revenue)} testId="total-revenue" />
               <Stat label="Số phiên" value={String(data.totals.sessions)} testId="total-sessions" />
               <Stat label="Tiền giờ" value={money(data.totals.table_amount)} />
@@ -78,31 +78,29 @@ export function ReportsPage() {
               <Stat label="Thu tiền mặt" value={money(data.totals.collected_cash)} />
               <Stat label="Thu chuyển khoản" value={money(data.totals.collected_transfer)} />
             </div>
-            <p className="muted">Doanh thu là tổng hoá đơn sau voucher ({money(data.totals.voucher_discount)} đã giảm), trước khi trừ tiền cọc đặt bàn ({money(data.totals.deposit_applied)}). Tiền thu tại quầy đã trừ cọc.</p>
 
-            <Card>
-              <div className="stack">
-                <div className="row" style={{ justifyContent: 'space-between' }}>
-                  <h2>Doanh thu</h2>
-                  <div className="row">
-                    <Tabs label="Nhóm theo" value={group} onChange={setGroup} tabs={GROUP_TABS} />
-                    <Button size="sm" variant="ghost" onClick={() => setAsTable(!asTable)}>{asTable ? 'Xem biểu đồ' : 'Xem dạng bảng'}</Button>
+            <div className="grid-cards" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', alignItems: 'start' }}>
+              <Card className="span-2">
+                <div className="stack">
+                  <div className="row" style={{ justifyContent: 'space-between' }}>
+                    <h2>Doanh thu</h2>
+                    <div className="row">
+                      <Tabs label="Nhóm theo" value={group} onChange={setGroup} tabs={GROUP_TABS} />
+                      <Button size="sm" variant="ghost" onClick={() => setAsTable(!asTable)}>{asTable ? 'Xem biểu đồ' : 'Xem dạng bảng'}</Button>
+                    </div>
                   </div>
+                  {asTable ? (
+                    <DataTable rows={data.series} rowKey={r => r.key}
+                      empty={<EmptyState title="Không có dữ liệu" description="" />}
+                      columns={[{ key: 'k', header: 'Kỳ', render: r => periodLabel(r.key, group) },
+                        { key: 's', header: 'Phiên', align: 'right', render: r => <span className="num">{r.sessions}</span> },
+                        { key: 'r', header: 'Doanh thu', align: 'right', render: r => <span className="num">{money(r.revenue)}</span> }]} />
+                  ) : (
+                    <BarChart ariaLabel={`Doanh thu ${GROUP_TABS.find(t => t.id === group)?.label.toLowerCase()} từ ${data.from} đến ${data.to}`}
+                      bars={data.series.map(r => ({ label: periodLabel(r.key, group), value: r.revenue, detail: `${r.sessions} phiên` }))} format={money} />
+                  )}
                 </div>
-                {asTable ? (
-                  <DataTable rows={data.series} rowKey={r => r.key}
-                    empty={<EmptyState title="Không có dữ liệu" description="" />}
-                    columns={[{ key: 'k', header: 'Kỳ', render: r => periodLabel(r.key, group) },
-                      { key: 's', header: 'Phiên', align: 'right', render: r => <span className="num">{r.sessions}</span> },
-                      { key: 'r', header: 'Doanh thu', align: 'right', render: r => <span className="num">{money(r.revenue)}</span> }]} />
-                ) : (
-                  <BarChart ariaLabel={`Doanh thu ${GROUP_TABS.find(t => t.id === group)?.label.toLowerCase()} từ ${data.from} đến ${data.to}`}
-                    bars={data.series.map(r => ({ label: periodLabel(r.key, group), value: r.revenue, detail: `${r.sessions} phiên` }))} format={money} />
-                )}
-              </div>
-            </Card>
-
-            <div className="grid-cards" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', alignItems: 'start' }}>
+              </Card>
               <div className="stack">
                 <h2>Theo bàn</h2>
                 <DataTable rows={data.by_table} rowKey={r => String(r.table_id)} empty={<EmptyState title="Không có dữ liệu" description="" />}
@@ -111,6 +109,10 @@ export function ReportsPage() {
                     { key: 'm', header: 'Giờ chơi', align: 'right', render: r => <span className="num">{(r.minutes / 60).toFixed(1)}</span> },
                     { key: 'r', header: 'Doanh thu', align: 'right', render: r => <span className="num">{money(r.revenue)}</span> }]} />
               </div>
+            </div>
+
+            <h2 className="muted" style={{ fontSize: 'var(--text-lg)' }}>Chi tiết bổ sung</h2>
+            <div className="grid-cards" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', alignItems: 'start' }}>
               <div className="stack">
                 <h2>Dịch vụ bán chạy</h2>
                 <DataTable rows={data.top_items} rowKey={r => r.name} empty={<EmptyState title="Chưa bán dịch vụ nào" description="Món gọi thêm trong phiên sẽ hiện ở đây." />}
@@ -118,16 +120,16 @@ export function ReportsPage() {
                     { key: 'q', header: 'SL', align: 'right', render: r => <span className="num">{r.quantity}</span> },
                     { key: 'a', header: 'Tiền', align: 'right', render: r => <span className="num">{money(r.amount)}</span> }]} />
               </div>
+              <Card>
+                <div className="stack">
+                  <h2>Giờ khách vào chơi</h2>
+                  <p className="muted">Số phiên bắt đầu theo từng giờ trong ngày (giờ Việt Nam).</p>
+                  <BarChart ariaLabel="Số phiên theo giờ bắt đầu" format={n => `${n} phiên`} axisFormat={n => String(Math.round(n))}
+                    bars={data.sessions_by_start_hour.map((n, h) => ({ label: `${h}h`, value: n }))} />
+                </div>
+              </Card>
             </div>
-
-            <Card>
-              <div className="stack">
-                <h2>Giờ khách vào chơi</h2>
-                <p className="muted">Số phiên bắt đầu theo từng giờ trong ngày (giờ Việt Nam).</p>
-                <BarChart ariaLabel="Số phiên theo giờ bắt đầu" format={n => `${n} phiên`} axisFormat={n => String(Math.round(n))}
-                  bars={data.sessions_by_start_hour.map((n, h) => ({ label: `${h}h`, value: n }))} />
-              </div>
-            </Card>
+            <p className="muted">Doanh thu là tổng hoá đơn sau voucher ({money(data.totals.voucher_discount)} đã giảm), trước khi trừ tiền cọc đặt bàn ({money(data.totals.deposit_applied)}). Tiền thu tại quầy đã trừ cọc.</p>
           </>
         )}
     </>

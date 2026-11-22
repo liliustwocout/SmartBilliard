@@ -11,9 +11,13 @@ import { ChangePasswordPage } from './pages/ChangePasswordPage';
 import { BookPage } from './pages/customer/BookPage';
 import { CustomerAuthPage } from './pages/customer/CustomerAuthPage';
 import { CustomerShell } from './pages/customer/CustomerShell';
+import type { CustomerPage } from './pages/customer/CustomerShell';
 import { MyBookingsPage } from './pages/customer/MyBookingsPage';
 import { MyHistoryPage } from './pages/customer/MyHistoryPage';
-import { RewardsPage } from './pages/customer/RewardsPage';
+import { HomePage } from './pages/customer/HomePage';
+import { ProfilePage } from './pages/customer/ProfilePage';
+import { SpinPage } from './pages/customer/SpinPage';
+import { WalletPage } from './pages/customer/WalletPage';
 import { CheckinCodePage } from './pages/shop/CheckinCodePage';
 import { GamePage } from './pages/shop/GamePage';
 import { ReportsPage } from './pages/shop/ReportsPage';
@@ -49,6 +53,14 @@ function Page({ route, user }: { route: Route; user: AuthUser }) {
   return <ShopDashboardPage />;
 }
 
+function customerPage(route: Route): CustomerPage {
+  if (route.name === 'my-book') return 'book';
+  if (route.name === 'my-spin') return 'spin';
+  if (route.name === 'my-wallet') return 'wallet';
+  if (route.name === 'my-profile' || route.name === 'my-bookings' || route.name === 'my-history') return 'profile';
+  return 'home';
+}
+
 function Router() {
   const { state } = useAuth();
   const [route, setRoute] = useState<Route>(() => parseRoute(window.location.hash));
@@ -66,10 +78,12 @@ function Router() {
   }
   if (state.user.must_change_password) return <ChangePasswordPage />;
   if (state.user.role === 'customer') {
-    const page = route.name === 'my-bookings' ? 'bookings' : route.name === 'my-history' ? 'history' : route.name === 'my-rewards' ? 'rewards' : 'book';
+    const profileBack = { href: '#/my/profile', label: 'Cá nhân' };
     return (
-      <CustomerShell page={page}>
-        {page === 'bookings' ? <MyBookingsPage /> : page === 'history' ? <MyHistoryPage /> : page === 'rewards' ? <RewardsPage /> : <BookPage />}
+      <CustomerShell page={customerPage(route)} back={route.name === 'my-bookings' || route.name === 'my-history' ? profileBack : undefined}>
+        {route.name === 'my-bookings' ? <MyBookingsPage /> : route.name === 'my-history' ? <MyHistoryPage />
+          : route.name === 'my-book' ? <BookPage /> : route.name === 'my-spin' ? <SpinPage /> : route.name === 'my-wallet' ? <WalletPage />
+          : route.name === 'my-profile' ? <ProfilePage /> : <HomePage />}
       </CustomerShell>
     );
   }

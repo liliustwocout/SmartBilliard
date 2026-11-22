@@ -97,7 +97,7 @@ describe('table dashboard', () => {
     ]);
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: 'Tính tiền' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Tính tiền Bàn 2' });
+    const dialog = await screen.findByRole('dialog', { name: 'Chi tiết Bàn 2' });
     expect((await within(dialog).findByTestId('quote-amount')).textContent).toBe(money(63000));
     fireEvent.click(within(dialog).getByLabelText('Chuyển khoản'));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Xác nhận đã thu tiền' }));
@@ -112,7 +112,7 @@ describe('table dashboard', () => {
     ]);
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: 'Tính tiền' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Tính tiền Bàn 2' });
+    const dialog = await screen.findByRole('dialog', { name: 'Chi tiết Bàn 2' });
     await within(dialog).findByTestId('quote-amount');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Huỷ phiên…' }));
     const confirmButton = await screen.findByRole('button', { name: 'Huỷ phiên' });
@@ -127,7 +127,7 @@ describe('table dashboard', () => {
     mock(staff, [['GET /api/venues/1/sessions/sess-1/quote', () => json(session)]]);
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: 'Tính tiền' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Tính tiền Bàn 2' });
+    const dialog = await screen.findByRole('dialog', { name: 'Chi tiết Bàn 2' });
     await within(dialog).findByTestId('quote-amount');
     expect(within(dialog).queryByRole('button', { name: 'Huỷ phiên…' })).toBeNull();
   });

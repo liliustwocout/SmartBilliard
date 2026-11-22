@@ -58,7 +58,7 @@ describe('items and customer inside checkout', () => {
     ]);
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: 'Tính tiền' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Tính tiền Bàn 2' });
+    const dialog = await screen.findByRole('dialog', { name: 'Chi tiết Bàn 2' });
     expect((await within(dialog).findByTestId('quote-amount')).textContent).toBe(money(60000));
     expect(within(dialog).queryByRole('option', { name: /Món cũ/ })).toBeNull(); // món ngừng bán không hiện
     fireEvent.change(within(dialog).getByLabelText('Thêm món'), { target: { value: '5' } });
@@ -79,7 +79,7 @@ describe('items and customer inside checkout', () => {
     ]);
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: 'Tính tiền' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Tính tiền Bàn 2' });
+    const dialog = await screen.findByRole('dialog', { name: 'Chi tiết Bàn 2' });
     await within(dialog).findByTestId('quote-amount');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Thêm' }));
     expect(await within(dialog).findByText('Chọn món cần thêm.')).toBeTruthy();
@@ -101,10 +101,15 @@ describe('items and customer inside checkout', () => {
     ]);
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: 'Tính tiền' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Tính tiền Bàn 2' });
+    const dialog = await screen.findByRole('dialog', { name: 'Chi tiết Bàn 2' });
     await within(dialog).findByTestId('quote-amount');
-    expect(within(dialog).queryByRole('option', { name: /Bị khoá/ })).toBeNull();
-    fireEvent.change(within(dialog).getByLabelText('Khách (không bắt buộc)'), { target: { value: '31' } });
+    const customerBox = within(dialog).getByRole('combobox', { name: 'Khách (không bắt buộc)' });
+    fireEvent.focus(customerBox);
+    expect(within(dialog).queryByRole('option', { name: /Bị khoá/ })).toBeNull(); // khách bị khoá không có trong danh sách
+    fireEvent.change(customerBox, { target: { value: 'khong co ai' } });
+    expect(within(dialog).getByText('Không có kết quả khớp.')).toBeTruthy();
+    fireEvent.change(customerBox, { target: { value: '0901' } }); // gõ để tìm theo số điện thoại
+    fireEvent.mouseDown(within(dialog).getByRole('option', { name: /0901/ }));
     await waitFor(() => expect(bodyOf(calls, 'PATCH /api/venues/1/sessions/sess-1/customer')).toEqual({ customer_id: 31 }));
   });
 
@@ -123,7 +128,7 @@ describe('items and customer inside checkout', () => {
     ]);
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: 'Tính tiền' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Tính tiền Bàn 2' });
+    const dialog = await screen.findByRole('dialog', { name: 'Chi tiết Bàn 2' });
     await within(dialog).findByTestId('quote-amount');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Xác nhận đã thu tiền' }));
     expect((await screen.findByTestId('invoice-total')).textContent).toBe(money(70000));
@@ -225,6 +230,6 @@ describe('customers', () => {
     fireEvent.change(within(form).getByLabelText('Số điện thoại'), { target: { value: '0901 111 111' } });
     fireEvent.click(within(form).getByRole('button', { name: 'Thêm khách' }));
     expect((await screen.findByTestId('temp-password')).textContent).toBe('TempKh-Xyz789');
-    expect(bodyOf(calls, 'POST /api/venues/1/customers')).toEqual({ display_name: 'An', phone: '0901 111 111' });
+    expect(bodyOf(calls, 'POST /api/venues/1/customers')).toEqual({ display_name: 'An', phone: '0901 111 111', password: '1234567890' });
   });
 });

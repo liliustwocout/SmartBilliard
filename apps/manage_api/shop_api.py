@@ -11,9 +11,10 @@ from sqlalchemy.orm import Session
 from apps.manage_api.admin import temp_password
 from apps.manage_api.auth import Principal, audit, utc_naive
 from apps.manage_api.models import AuthSession, BilliardTable, Payment, PlaySession, Product, SessionItem, User, Venue
-from apps.manage_api.security import hash_password
+from apps.manage_api.security import hash_password, password_problem
 from apps.manage_api.textutil import PHONE_RE, fold, normalize_phone
 
+DEFAULT_CUSTOMER_PASSWORD = "1234567890"
 MAX_PRICE = 10_000_000
 
 
@@ -46,6 +47,7 @@ class ItemAdd(BaseModel):
 class CustomerCreate(BaseModel):
     display_name: str = Field(min_length=1, max_length=120)
     phone: str = Field(min_length=1, max_length=20)
+    password: str | None = Field(default=None, max_length=200)  # bỏ trống = mật khẩu gốc
 
 
 class CustomerStatus(BaseModel):
@@ -295,7 +297,10 @@ def build_shop_api(get_db: Callable, require_venue_roles: Callable, now_fn: Call
             raise HTTPException(400, "Số điện thoại cần đủ 10 chữ số, bắt đầu bằng 0.")
         if db.scalar(select(User.id).where(User.venue_id == venue_id, User.role == "customer", User.login == phone)):
             raise HTTPException(409, "Số điện thoại này đã có tài khoản ở quán.")
-        password = temp_password()
+        # Bỏ trống = mật khẩu gốc cố định theo yêu cầu quán; mật khẩu tự đặt phải đạt chuẩn. Luôn buộc khách đổi ở lần đăng nhập đầu.
+        password = body.password or DEFAULT_CUSTOMER_PASSWORD
+        if password != DEFAULT_CUSTOMER_PASSWORD and (problem := password_problem(password)):
+            raise HTTPException(400, problem)
         now = now_fn()
         user = User(role="customer", login=phone, display_name=body.display_name.strip(), password_hash=hash_password(password),
                     venue_id=venue_id, must_change_password=True, created_at=utc_naive(now))
@@ -322,5 +327,17 @@ def build_shop_api(get_db: Callable, require_venue_roles: Callable, now_fn: Call
                   detail={"from": before, "to": body.status})
             db.commit()
         return customer_view(user)
+
+    @router.post("/customers/{user_id}/reset-password")
+    def reset_customer_password(venue_id: int, user_id: int, principal: OwnerOnly, db: Db):
+        user = db.get(User, user_id)
+        if user is None or user.venue_id != venue_id or user.role != "customer":
+            raise HTTPException(404, "Không tìm thấy khách.")
+        user.password_hash, user.must_change_password = hash_password(DEFAULT_CUSTOMER_PASSWORD), True
+        user.failed_attempts, user.locked_until = 0, None
+        revoke_sessions(db, user.id)  # đăng xuất mọi thiết bị đang dùng mật khẩu cũ
+        audit(db, now_fn(), "customer_password_reset", actor=principal.user, venue_id=venue_id, target=user.login)
+        db.commit()
+        return {"login": user.login, "temp_password": DEFAULT_CUSTOMER_PASSWORD}
 
     return router

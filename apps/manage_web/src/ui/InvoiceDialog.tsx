@@ -12,28 +12,35 @@ function InvoiceBody({ venueId, sessionId }: { venueId: number; sessionId: strin
   if (!data) return <Skeleton height={200} />;
   return (
     <div className="invoice" data-testid="invoice">
-      <h3>{data.venue_name}</h3>
-      <p className="muted">Hoá đơn #{data.invoice_no} · {data.table_name}</p>
-      <dl className="credentials">
+      <header className="invoice-head">
+        <h3>{data.venue_name}</h3>
+        <p className="invoice-kicker">HOÁ ĐƠN THANH TOÁN</p>
+        <p className="muted">#{data.invoice_no} · {data.table_name}</p>
+      </header>
+      <dl className="invoice-meta">
         <dt>Bắt đầu</dt><dd>{dateTime(data.started_at)}</dd>
         <dt>Kết thúc</dt><dd>{dateTime(data.ended_at)}</dd>
         {data.customer && <><dt>Khách</dt><dd>{data.customer}</dd></>}
       </dl>
-      <table className="data-table">
+      <table className="invoice-lines">
+        <thead><tr><th>Khoản</th><th className="right">Thành tiền</th></tr></thead>
         <tbody>
-          <tr><td>Giờ chơi ({data.billable_minutes} phút × {money(data.rate)}/giờ)</td><td className="right num">{money(data.table_amount)}</td></tr>
+          <tr><td>Giờ chơi<small>{data.billable_minutes} phút × {money(data.rate)}/giờ</small></td><td className="right num">{money(data.table_amount)}</td></tr>
           {data.items.map(item => (
-            <tr key={item.id}><td>{item.name} × {item.quantity}</td><td className="right num">{money(item.amount)}</td></tr>
+            <tr key={item.id}><td>{item.name} × {item.quantity}<small>{money(item.unit_price)} / đơn vị</small></td><td className="right num">{money(item.amount)}</td></tr>
           ))}
+        </tbody>
+        <tfoot>
           {data.voucher_discount > 0 && <tr><td>Voucher</td><td className="right num">− {money(data.voucher_discount)}</td></tr>}
-          <tr><td><strong>Tổng cộng</strong></td><td className="right num" data-testid="invoice-total" style={{ fontSize: 'var(--text-xl)' }}>{money(data.total)}</td></tr>
+          <tr className="invoice-total"><td>Tổng cộng</td><td className="right num" data-testid="invoice-total">{money(data.total)}</td></tr>
           {data.deposit_applied > 0 && <>
             <tr><td>Đã cọc (mô phỏng)</td><td className="right num">− {money(data.deposit_applied)}</td></tr>
-            <tr><td><strong>Còn phải thu</strong></td><td className="right num" data-testid="invoice-due" style={{ fontSize: 'var(--text-xl)' }}>{money(data.amount_due)}</td></tr>
+            <tr className="invoice-total"><td>Còn phải thu</td><td className="right num" data-testid="invoice-due">{money(data.amount_due)}</td></tr>
           </>}
-        </tbody>
+        </tfoot>
       </table>
-      <p className="muted">Thanh toán: {data.payment_method ? METHOD[data.payment_method] : '—'}{data.cashier ? ` · Thu ngân: ${data.cashier}` : ''}</p>
+      <p className="invoice-foot">Thanh toán: {data.payment_method ? METHOD[data.payment_method] : '—'}{data.cashier ? ` · Thu ngân: ${data.cashier}` : ''}</p>
+      <p className="invoice-thanks">Cảm ơn quý khách, hẹn gặp lại!</p>
     </div>
   );
 }

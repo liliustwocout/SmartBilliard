@@ -146,9 +146,9 @@ def build_game_api(get_db: Callable, require_venue_roles: Callable, now_fn: Call
         return len(prizes) >= 2 and any(p.kind == "nothing" for p in prizes)
 
     def prize_view(p: WheelPrize, owner: bool = False) -> dict:
-        view = {"id": p.id, "name": p.name, "kind": p.kind, "value": p.value, "percent": p.weight_bp / 100}
+        view = {"id": p.id, "name": p.name, "kind": p.kind, "value": p.value}  # khách không nhận tỷ lệ trúng
         if owner:
-            view.update({"weight_bp": p.weight_bp, "stock": p.stock_remaining, "voucher_valid_days": p.voucher_valid_days})
+            view.update({"percent": p.weight_bp / 100, "weight_bp": p.weight_bp, "stock": p.stock_remaining, "voucher_valid_days": p.voucher_valid_days})
         return view
 
     def expire_tickets(db: Session, venue_id: int, customer_id: int | None, now: datetime) -> None:

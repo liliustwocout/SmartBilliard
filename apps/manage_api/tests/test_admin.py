@@ -199,3 +199,21 @@ def test_slug_and_temp_password_helpers():
     assert len({temp_password() for _ in range(50)}) == 50
     assert all(password_problem(temp_password()) is None for _ in range(50))
     assert not set(temp_password()) & set("0OIl1")
+
+
+def test_audit_filters_by_action_venue_text_and_vietnam_day(env):
+    admin, app = env
+    vid = create_venue(admin).json()["venue"]["id"]
+    admin.patch(f"/api/admin/venues/{vid}", json={"status": "SUSPENDED"})
+    everything = admin.get("/api/admin/audit?limit=500").json()
+    created = admin.get("/api/admin/audit?action=venue_created").json()
+    assert created and all(r["action"] == "venue_created" for r in created) and len(created) < len(everything)
+    assert all(r["venue_id"] == vid and r["venue_name"] for r in admin.get(f"/api/admin/audit?venue_id={vid}").json())
+    assert admin.get("/api/admin/audit?venue_id=99999").json() == []
+    target = created[0]["target"]
+    assert [r["id"] for r in admin.get(f"/api/admin/audit?q={target[:4].upper()}").json()] != []
+    assert admin.get("/api/admin/audit?q=khong-co-chuoi-nay-dau").json() == []
+    day = everything[0]["at"][:10]
+    assert admin.get(f"/api/admin/audit?date_from={day}&date_to={day}").status_code == 200
+    assert admin.get("/api/admin/audit?date_from=2000-01-01&date_to=2000-01-02").json() == []
+    assert admin.get("/api/admin/audit?date_from=bad").status_code == 400

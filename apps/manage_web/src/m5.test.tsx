@@ -74,7 +74,9 @@ describe('customer entry page', () => {
     window.location.hash = '#/c/quan-a';
     const calls = mock([anon, ['GET /api/public/venues/quan-a', () => json({ name: 'Quán A', slug: 'quan-a' })],
       ['POST /api/auth/register', () => json(customer, 201)],
-      ['GET /api/venues/1/availability', () => json(availability)]]);
+      ['GET /api/venues/1/my/game', () => json({ points: 0, level: { name: 'Đồng', next_at: 100 }, streak: 0, best_streak: 0, checked_in_today: false, checkin_mode: 'off', checkin_points: 10,
+        needs_code: false, calendar: [], next_milestone: null, tickets: [], wheel: { enabled: false, prizes: [], daily_guarantee: false }, vouchers: [], ledger: [] })],
+      ['GET /api/venues/1/my/bookings', () => json([])]]);
     render(<App />);
     expect(await screen.findByRole('heading', { name: 'Quán A' })).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: 'Đăng ký' }));
@@ -84,7 +86,7 @@ describe('customer entry page', () => {
     fireEvent.change(screen.getByLabelText('Số điện thoại'), { target: { value: '0901111111' } });
     fireEvent.change(screen.getByLabelText('Mật khẩu'), { target: { value: 'Khach-Hang-2026' } });
     fireEvent.click(screen.getByRole('button', { name: 'Tạo tài khoản' }));
-    expect(await screen.findByRole('heading', { name: 'Đặt bàn' })).toBeTruthy();
+    expect(await screen.findByLabelText('Thẻ thành viên')).toBeTruthy(); // khách mới vào trang chủ
     expect(bodyOf(calls, 'POST /api/auth/register')).toEqual({ venue_slug: 'quan-a', display_name: 'Anh Nam', phone: '0901111111', password: 'Khach-Hang-2026' });
     expect(screen.queryByRole('link', { name: 'Nhân viên' })).toBeNull(); // khách không có menu vận hành
   });
@@ -111,6 +113,7 @@ describe('customer entry page', () => {
 });
 
 describe('booking a table', () => {
+  beforeEach(() => { window.location.hash = '#/my/book'; });
   const base: Route[] = [['GET /api/auth/me', () => json(customer)], ['GET /api/venues/1/availability', () => json(availability)]];
 
   it('disables past and busy slots, and shows the mock deposit notice', async () => {
@@ -255,7 +258,7 @@ describe('checkout with a deposit', () => {
       ['GET /api/venues/1/products', () => json([])], ['GET /api/venues/1/customers', () => json({ total: 0, items: [] })]]);
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: 'Tính tiền' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Tính tiền Bàn 2' });
+    const dialog = await screen.findByRole('dialog', { name: 'Chi tiết Bàn 2' });
     expect((await within(dialog).findByTestId('quote-total')).textContent).toContain('120.000');
     expect(within(dialog).getByTestId('deposit-applied').textContent).toContain('50.000');
     expect(within(dialog).getByTestId('quote-amount').textContent).toContain('70.000');

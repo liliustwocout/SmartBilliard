@@ -43,6 +43,13 @@ class CheckoutBody(BaseModel):
     voucher_id: int | None = None
 
 
+MAX_BACKDATE_HOURS = 24
+
+
+class StartTimeBody(BaseModel):
+    started_at: datetime
+
+
 class VoidBody(BaseModel):
     reason: str = Field(min_length=3, max_length=200)
 
@@ -223,6 +230,31 @@ def build_venue_api(get_db: Callable, require_venue_roles: Callable, now_fn: Cal
               detail={"session_id": session.id, "rate": table.hourly_rate})
         db.commit()
         return session_view(session, table.name, now)
+
+    @router.patch("/sessions/{session_id}/start")
+    def set_session_start(venue_id: int, session_id: str, body: StartTimeBody, principal: OwnerOnly, db: Db):
+        """Chủ quán chỉnh giờ bắt đầu khi quên mở bàn đúng lúc. Chỉ lùi về quá khứ gần, không vượt giờ máy chủ."""
+        session = session_or_404(db, venue_id, session_id)
+        if session.status != "ACTIVE":
+            raise HTTPException(409, "Chỉ chỉnh được giờ của phiên đang chơi.")
+        now = now_fn()
+        new_start = utc_naive(body.started_at if body.started_at.tzinfo else body.started_at.replace(tzinfo=timezone.utc))
+        if new_start > utc_naive(now):
+            raise HTTPException(400, "Giờ bắt đầu không được ở tương lai.")
+        if new_start < utc_naive(now) - timedelta(hours=MAX_BACKDATE_HOURS):
+            raise HTTPException(400, f"Chỉ được lùi giờ bắt đầu tối đa {MAX_BACKDATE_HOURS} giờ.")
+        old_start = session.started_at
+        claimed = db.execute(update(PlaySession).where(PlaySession.id == session.id, PlaySession.status == "ACTIVE")
+                             .values(started_at=new_start))
+        if claimed.rowcount != 1:
+            db.rollback()
+            raise HTTPException(409, "Phiên vừa được chốt, không chỉnh được nữa.")
+        table_name = db.get(BilliardTable, session.table_id).name
+        audit(db, now, "session_start_changed", actor=principal.user, venue_id=venue_id, target=table_name,
+              detail={"session_id": session.id, "from": iso(old_start), "to": iso(new_start)})
+        db.commit()
+        db.refresh(session)
+        return session_view(session, table_name, now, items_sum(db, [session.id]).get(session.id, 0), item_lines(db, session.id))
 
     @router.get("/sessions/{session_id}/quote")
     def session_quote(venue_id: int, session_id: str, _: Operator, db: Db, voucher_id: int | None = None):

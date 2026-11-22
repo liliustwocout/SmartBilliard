@@ -6,12 +6,18 @@ import { duration, money } from '../../format';
 import { useLoad } from '../../useLoad';
 import { useNow } from '../../useNow';
 import { Button, Card, EmptyState, ErrorState, Field, Modal, SelectField, Skeleton, TableCard, useToast } from '../../ui/components';
+import { Combobox } from '../../ui/Combobox';
 import { InvoiceDialog } from '../../ui/InvoiceDialog';
 
 const POLL_MS = 5000;
 
-function CheckoutDialog({ venueId, table, isOwner, onClose, onDone }:
-  { venueId: number; table: TableRow | null; isOwner: boolean; onClose: () => void; onDone: (paidSessionId: string | null) => void }) {
+function localHm(iso: string): string {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function CheckoutDialog({ venueId, table, isOwner, onClose, onDone, onChanged }:
+  { venueId: number; table: TableRow | null; isOwner: boolean; onClose: () => void; onDone: (paidSessionId: string | null) => void; onChanged: () => void }) {
   const toast = useToast();
   const [quote, setQuote] = useState<SessionView | null>(null);
   const [products, setProducts] = useState<ProductRow[]>([]);
@@ -24,6 +30,7 @@ function CheckoutDialog({ venueId, table, isOwner, onClose, onDone }:
   const [productId, setProductId] = useState('');
   const [quantity, setQuantity] = useState('1');
   const [voucherId, setVoucherId] = useState('');
+  const [startTime, setStartTime] = useState('');
   const sessionId = table?.session?.id;
   const base = `/venues/${venueId}/sessions/${sessionId}`;
 
@@ -40,7 +47,7 @@ function CheckoutDialog({ venueId, table, isOwner, onClose, onDone }:
       api<SessionView>(`/venues/${venueId}/sessions/${sessionId}/quote`),
       api<ProductRow[]>(`/venues/${venueId}/products`),
       api<Page<CustomerRow>>(`/venues/${venueId}/customers?limit=200`),
-    ]).then(([q, p, c]) => { if (!cancelled) { setQuote(q); setProducts(p.filter(x => x.status === 'ACTIVE')); setCustomers(c.items.filter(x => x.status === 'ACTIVE')); } })
+    ]).then(([q, p, c]) => { if (!cancelled) { setQuote(q); setStartTime(localHm(q.started_at)); setProducts(p.filter(x => x.status === 'ACTIVE')); setCustomers(c.items.filter(x => x.status === 'ACTIVE')); } })
       .catch(reason => { if (!cancelled) setError((reason as Error).message); });
     return () => { cancelled = true; };
   }, [venueId, sessionId]);
@@ -65,6 +72,18 @@ function CheckoutDialog({ venueId, table, isOwner, onClose, onDone }:
     await refresh('');
   });
 
+  const saveStart = () => guarded(async () => {
+    const match = /^(\d{2}):(\d{2})$/.exec(startTime);
+    if (!match) throw new Error('Nhập giờ bắt đầu dạng giờ:phút.');
+    const when = new Date();
+    when.setHours(Number(match[1]), Number(match[2]), 0, 0);
+    if (when.getTime() > Date.now()) when.setDate(when.getDate() - 1); // giờ lớn hơn hiện tại → hiểu là hôm qua
+    await api(`${base}/start`, { method: 'PATCH', body: { started_at: when.toISOString() } });
+    toast('success', `Đã chỉnh giờ bắt đầu ${table?.name ?? ''}.`);
+    await refresh();
+    onChanged();
+  });
+
   const confirm = () => guarded(async () => {
     if (!sessionId) return;
     if (mode === 'pay') {
@@ -79,7 +98,7 @@ function CheckoutDialog({ venueId, table, isOwner, onClose, onDone }:
   });
 
   return (
-    <Modal open={table !== null} title={mode === 'pay' ? `Tính tiền ${table?.name ?? ''}` : `Huỷ phiên ${table?.name ?? ''}`} onClose={onClose}
+    <Modal open={table !== null} title={mode === 'pay' ? `Chi tiết ${table?.name ?? ''}` :`Huỷ phiên ${table?.name ?? ''}`} onClose={onClose}
       actions={<>
         {isOwner && mode === 'pay' && <Button variant="ghost" onClick={() => setMode('void')}>Huỷ phiên…</Button>}
         {mode === 'void' && <Button variant="ghost" onClick={() => setMode('pay')}>Quay lại</Button>}
@@ -91,6 +110,15 @@ function CheckoutDialog({ venueId, table, isOwner, onClose, onDone }:
       {!quote && !error && <Skeleton height={72} />}
       {quote && mode === 'pay' && (
         <>
+          <div className="row" style={{ alignItems: 'flex-end' }}>
+            {isOwner ? (
+              <>
+                <div style={{ width: 140 }}><Field label="Giờ bắt đầu" type="time" value={startTime} onChange={e => setStartTime(e.target.value)} /></div>
+                <Button disabled={busy || !startTime || startTime === localHm(quote.started_at)} onClick={() => void saveStart()}>Lưu giờ</Button>
+                <span className="muted">Dùng khi quên mở bàn đúng lúc (tối đa lùi 24 giờ).</span>
+              </>
+            ) : <span className="muted">Bắt đầu lúc <strong className="num">{localHm(quote.started_at)}</strong> · chỉ chủ quán chỉnh được giờ.</span>}
+          </div>
           <dl className="credentials">
             <dt>Đã chơi</dt><dd className="num">{duration(quote.elapsed_seconds)}</dd>
             <dt>Tiền giờ</dt><dd className="num">{quote.billable_minutes} phút × {money(quote.rate_snapshot)}/giờ = {money(quote.table_amount)}</dd>
@@ -126,10 +154,9 @@ function CheckoutDialog({ venueId, table, isOwner, onClose, onDone }:
             </div>
           </div>
 
-          <SelectField label="Khách (không bắt buộc)" value={quote.customer_id ? String(quote.customer_id) : ''} onChange={e => void setCustomer(e.target.value)}>
-            <option value="">Khách vãng lai</option>
-            {customers.map(c => <option key={c.id} value={c.id}>{c.display_name} · {c.login}</option>)}
-          </SelectField>
+          <Combobox label="Khách (không bắt buộc)" value={quote.customer_id ? String(quote.customer_id) : ''} onChange={value => void setCustomer(value)}
+            emptyLabel="Khách vãng lai" placeholder="Gõ tên hoặc số điện thoại…" disabled={busy}
+            options={customers.map(c => ({ value: String(c.id), label: c.display_name, hint: c.login }))} />
 
           {(quote.available_vouchers ?? []).length > 0 && (
             <SelectField label="Voucher của khách" value={voucherId} onChange={e => { setVoucherId(e.target.value); void guarded(() => refresh(e.target.value)); }}>
@@ -214,6 +241,7 @@ export function ShopDashboardPage() {
               return (
                 <TableCard key={table.id} name={table.name} state={session ? 'playing' : 'free'} rate={`${money(table.hourly_rate)}/giờ`}
                   clock={session ? duration(elapsed) : undefined} amount={session ? money(session.amount_vnd) : undefined}
+                  onOpen={session ? () => setCheckout(table) : undefined}
                   actions={session
                     ? <Button variant="primary" size="sm" onClick={() => setCheckout(table)}>Tính tiền</Button>
                     : <Button variant="primary" size="sm" loading={opening === table.id} onClick={() => void openTable(table)}>Mở bàn</Button>} />
@@ -221,7 +249,7 @@ export function ShopDashboardPage() {
             })}
           </div>
         )}
-      <CheckoutDialog venueId={venueId} table={checkout} isOwner={isOwner} onClose={() => setCheckout(null)}
+      <CheckoutDialog venueId={venueId} table={checkout} isOwner={isOwner} onClose={() => setCheckout(null)} onChanged={tables.reload}
         onDone={paidId => { setCheckout(null); tables.reload(); revenue.reload(); if (paidId) setInvoiceFor(paidId); }} />
       <InvoiceDialog venueId={venueId} sessionId={invoiceFor} onClose={() => setInvoiceFor(null)} />
     </>

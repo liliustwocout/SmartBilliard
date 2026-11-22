@@ -310,7 +310,8 @@ def test_game_state_reports_calendar_level_and_next_milestone(p):
     assert state["checked_in_today"] is True and state["streak"] == 1 and state["level"] == {"name": "Đồng", "next_at": 100}
     assert state["next_milestone"] == {"days": 3, "bonus": 20} and len(state["calendar"]) == 14 and state["calendar"][-1] == {"day": "2026-11-22", "checked": True}
     assert state["wheel"]["enabled"] is True and state["wheel"]["daily_guarantee"] is True
-    assert sum(pz["percent"] for pz in state["wheel"]["prizes"]) == 100
+    assert all("percent" not in pz and "weight_bp" not in pz for pz in state["wheel"]["prizes"])  # không lộ tỷ lệ trúng cho khách
+    assert sum(pz["percent"] for pz in p["owner"].get(v(p, "/wheel")).json()["prizes"]) == 100
     assert game_api.level_for(100)["name"] == "Bạc" and game_api.level_for(5000) == {"name": "Kim cương", "next_at": None}
 
 

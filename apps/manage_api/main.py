@@ -1,12 +1,12 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException
-from sqlalchemy import create_engine, event, select, text
+from sqlalchemy import create_engine, event, func, or_, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import StaticPool
@@ -88,11 +88,39 @@ def create_app(settings: ManageSettings | None = None,
 
     @app.get("/api/admin/audit")
     def admin_audit(_: Annotated[Principal, Depends(require_roles("platform_admin"))],
-                    db: Annotated[Session, Depends(get_db)], limit: int = 100):
-        rows = db.scalars(select(AuditLog).order_by(AuditLog.id.desc()).limit(max(1, min(limit, 500)))).all()
+                    db: Annotated[Session, Depends(get_db)], limit: int = 100, action: str | None = None,
+                    venue_id: int | None = None, q: str = "", date_from: str | None = None, date_to: str | None = None):
+        """Lọc nhật ký: loại hành động, quán, từ khoá (đối tượng hoặc tên đăng nhập người làm), ngày theo giờ Việt Nam (UTC+7)."""
+        query = select(AuditLog)
+        if action:
+            query = query.where(AuditLog.action == action)
+        if venue_id is not None:
+            query = query.where(AuditLog.venue_id == venue_id)
+        needle = q.strip().lower()
+        if needle:
+            like = f"%{needle.replace('%', '').replace('_', '')}%"
+            actor_ids = select(User.id).where(func.lower(User.login).like(like))
+            query = query.where(or_(func.lower(AuditLog.target).like(like), AuditLog.actor_user_id.in_(actor_ids)))
+
+        def day_start(value: str | None, plus: int = 0) -> datetime | None:
+            if not value:
+                return None
+            try:
+                local = datetime.strptime(value, "%Y-%m-%d") + timedelta(days=plus)
+            except ValueError:
+                raise HTTPException(400, "Ngày cần dạng YYYY-MM-DD.")
+            return local - timedelta(hours=7)  # 00:00 giờ VN → UTC không múi giờ
+
+        lower, upper = day_start(date_from), day_start(date_to, 1)
+        if lower is not None:
+            query = query.where(AuditLog.at >= lower)
+        if upper is not None:
+            query = query.where(AuditLog.at < upper)
+        rows = db.scalars(query.order_by(AuditLog.id.desc()).limit(max(1, min(limit, 500)))).all()
         logins = dict(db.execute(select(User.id, User.login).where(User.id.in_({r.actor_user_id for r in rows if r.actor_user_id}))).all())
+        venues = dict(db.execute(select(Venue.id, Venue.name).where(Venue.id.in_({r.venue_id for r in rows if r.venue_id}))).all())
         return [{"id": r.id, "at": r.at.isoformat() + "Z", "actor_user_id": r.actor_user_id,
-                 "actor_login": logins.get(r.actor_user_id), "venue_id": r.venue_id,
+                 "actor_login": logins.get(r.actor_user_id), "venue_id": r.venue_id, "venue_name": venues.get(r.venue_id),
                  "action": r.action, "target": r.target, "detail": r.detail} for r in rows]
 
     @app.get("/api/health")
