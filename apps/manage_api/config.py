@@ -26,6 +26,7 @@ class ManageSettings:
     allowed_hosts: tuple[str, ...] = ("127.0.0.1", "localhost")
     extra_origins: tuple[str, ...] = field(default_factory=tuple)
     payment_provider: str = "mock"
+    trusted_proxies: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self):
         if not self.database_url.startswith("sqlite:"):
@@ -58,4 +59,5 @@ class ManageSettings:
             allowed_hosts=csv("MANAGE_ALLOWED_HOSTS") or cls.allowed_hosts,
             extra_origins=csv("MANAGE_EXTRA_ORIGINS"),
             payment_provider=os.environ.get("MANAGE_PAYMENT_PROVIDER", cls.payment_provider),
+            trusted_proxies=csv("MANAGE_TRUSTED_PROXIES"),
         )

@@ -23,16 +23,17 @@ function CheckoutDialog({ venueId, table, isOwner, onClose, onDone }:
   const [busy, setBusy] = useState(false);
   const [productId, setProductId] = useState('');
   const [quantity, setQuantity] = useState('1');
+  const [voucherId, setVoucherId] = useState('');
   const sessionId = table?.session?.id;
   const base = `/venues/${venueId}/sessions/${sessionId}`;
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (voucher = voucherId) => {
     if (!sessionId) return;
-    setQuote(await api<SessionView>(`/venues/${venueId}/sessions/${sessionId}/quote`));
-  }, [venueId, sessionId]);
+    setQuote(await api<SessionView>(`/venues/${venueId}/sessions/${sessionId}/quote${voucher ? `?voucher_id=${voucher}` : ''}`));
+  }, [venueId, sessionId, voucherId]);
 
   useEffect(() => {
-    setQuote(null); setError(''); setMode('pay'); setReason(''); setMethod('cash'); setProductId(''); setQuantity('1');
+    setQuote(null); setError(''); setMode('pay'); setReason(''); setMethod('cash'); setProductId(''); setQuantity('1'); setVoucherId('');
     if (!sessionId) return;
     let cancelled = false;
     Promise.all([
@@ -60,13 +61,14 @@ function CheckoutDialog({ venueId, table, isOwner, onClose, onDone }:
   const removeItem = (item: ItemLine) => guarded(async () => { await api(`${base}/items/${item.id}`, { method: 'DELETE' }); await refresh(); });
   const setCustomer = (value: string) => guarded(async () => {
     await api(`${base}/customer`, { method: 'PATCH', body: { customer_id: value ? Number(value) : null } });
-    await refresh();
+    setVoucherId('');
+    await refresh('');
   });
 
   const confirm = () => guarded(async () => {
     if (!sessionId) return;
     if (mode === 'pay') {
-      const result = await api<SessionView>(`${base}/checkout`, { body: { payment_method: method } });
+      const result = await api<SessionView>(`${base}/checkout`, { body: { payment_method: method, voucher_id: voucherId ? Number(voucherId) : null } });
       toast('success', `Đã thu ${money(result.amount_due)} · ${table?.name}.`);
       onDone(sessionId);
     } else {
@@ -93,6 +95,7 @@ function CheckoutDialog({ venueId, table, isOwner, onClose, onDone }:
             <dt>Đã chơi</dt><dd className="num">{duration(quote.elapsed_seconds)}</dd>
             <dt>Tiền giờ</dt><dd className="num">{quote.billable_minutes} phút × {money(quote.rate_snapshot)}/giờ = {money(quote.table_amount)}</dd>
             <dt>Dịch vụ</dt><dd className="num" data-testid="items-amount">{money(quote.items_amount)}</dd>
+            {quote.voucher_discount > 0 && <><dt>Voucher</dt><dd className="num" data-testid="voucher-discount">− {money(quote.voucher_discount)}</dd></>}
             <dt>Tổng hoá đơn</dt><dd className="num" data-testid="quote-total">{money(quote.amount_vnd)}</dd>
             {quote.deposit_applied > 0 && <><dt>Đã cọc (mô phỏng)</dt><dd className="num" data-testid="deposit-applied">− {money(quote.deposit_applied)}</dd></>}
             <dt>Cần thu</dt><dd className="num" data-testid="quote-amount" style={{ fontSize: 'var(--text-2xl)' }}>{money(quote.amount_due)}</dd>
@@ -127,6 +130,13 @@ function CheckoutDialog({ venueId, table, isOwner, onClose, onDone }:
             <option value="">Khách vãng lai</option>
             {customers.map(c => <option key={c.id} value={c.id}>{c.display_name} · {c.login}</option>)}
           </SelectField>
+
+          {(quote.available_vouchers ?? []).length > 0 && (
+            <SelectField label="Voucher của khách" value={voucherId} onChange={e => { setVoucherId(e.target.value); void guarded(() => refresh(e.target.value)); }}>
+              <option value="">Không dùng voucher</option>
+              {(quote.available_vouchers ?? []).map(v => <option key={v.id} value={v.id}>{v.label} · {v.code}</option>)}
+            </SelectField>
+          )}
 
           <fieldset className="method">
             <legend>Hình thức thanh toán</legend>

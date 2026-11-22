@@ -54,7 +54,7 @@ export interface SessionView {
   id: string; table_id: number; table_name: string | null; status: 'ACTIVE' | 'PAID' | 'VOID';
   started_at: string; ended_at: string | null; rate_snapshot: number; customer_id: number | null; void_reason: string | null;
   elapsed_seconds: number; billable_minutes: number; amount_vnd: number;
-  table_amount: number; items_amount: number; items?: ItemLine[]; deposit_applied: number; amount_due: number;
+  table_amount: number; items_amount: number; items?: ItemLine[]; deposit_applied: number; amount_due: number; voucher_discount: number; available_vouchers?: QuoteVoucher[];
 }
 export interface ItemLine { id: number; product_id: number; name: string; unit_price: number; quantity: number; amount: number }
 export interface TableRow {
@@ -68,7 +68,7 @@ export interface StaffRow { id: number; login: string; display_name: string; sta
 export interface ProductRow { id: number; name: string; price: number; status: 'ACTIVE' | 'INACTIVE' }
 export interface Invoice {
   venue_name: string; invoice_no: string; table_name: string; started_at: string; ended_at: string; billable_minutes: number; rate: number;
-  table_amount: number; items: ItemLine[]; items_amount: number; total: number; deposit_applied: number; amount_due: number; payment_method: PaymentMethod | null;
+  table_amount: number; items: ItemLine[]; items_amount: number; total: number; voucher_discount: number; deposit_applied: number; amount_due: number; payment_method: PaymentMethod | null;
   cashier: string | null; customer: string | null;
 }
 
@@ -86,3 +86,32 @@ export interface Availability {
 }
 export interface MySession { id: string; table_name: string | null; started_at: string; ended_at: string | null; billable_minutes: number | null; total: number | null; deposit_applied: number }
 export interface PublicVenue { name: string; slug: string }
+
+export type PrizeKind = 'points' | 'discount_vnd' | 'free_minutes' | 'nothing';
+export interface WheelPrizePublic { id: number; name: string; kind: PrizeKind; value: number; percent: number }
+export interface VoucherView { id: number; code: string; label: string; kind: 'discount_vnd' | 'free_minutes'; value: number; expires_at: string }
+export interface GameState {
+  points: number; level: { name: string; next_at: number | null }; streak: number; best_streak: number; checked_in_today: boolean;
+  checkin_mode: CheckinMode; checkin_points: number; needs_code: boolean; calendar: Array<{ day: string; checked: boolean }>;
+  next_milestone: { days: number; bonus: number } | null; tickets: Array<{ id: number; day: string; expires_at: string }>;
+  wheel: { enabled: boolean; prizes: WheelPrizePublic[]; daily_guarantee: boolean }; vouchers: VoucherView[];
+  ledger: Array<{ delta: number; reason: string; at: string }>;
+}
+export interface SpinResultView {
+  duplicate: boolean; prize: { id: number | null; name: string; kind: PrizeKind; value: number }; prize_index: number | null;
+  voucher: { code: string; label: string; expires_at: string } | null; points: number;
+}
+export interface CheckinResult { already_checked_in: boolean; points_added: number; streak_bonus?: number; streak: number; ticket_id: number | null; points?: number }
+export type CheckinMode = 'off' | 'wifi' | 'code' | 'wifi_or_code' | 'wifi_and_code';
+export interface GameSettingsData {
+  checkin_mode: CheckinMode; checkin_points: number; streak_milestones: Array<{ days: number; bonus: number }>; wheel_enabled: boolean;
+  min_daily_prizes: number; max_daily_prizes: number; expected_daily_checkins: number; spin_expiry_days: number; code_rotation_seconds: number;
+}
+export interface OwnerPrize { id: number; name: string; kind: PrizeKind; value: number; percent: number; weight_bp: number; stock: number | null; voucher_valid_days: number }
+export interface GameStats {
+  day: string; checkins_today: number;
+  plan: { expected: number; min_prizes: number; max_prizes: number; spins: number; prizes_given: number; guaranteed_total: number; guaranteed_given: number; created: boolean };
+  recent: Array<{ at: string; customer: string; prize: string; kind: PrizeKind }>;
+}
+export interface CheckinCode { mode: CheckinMode; enabled: boolean; code: string; expires_in_seconds: number; rotation_seconds: number }
+export interface QuoteVoucher { id: number; code: string; label: string; kind: 'discount_vnd' | 'free_minutes'; value: number; expires_at: string }

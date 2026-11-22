@@ -6,7 +6,7 @@ import { BrandBall } from '../ui/FeltTable';
 import { ThemeToggle } from '../ui/ThemeToggle';
 
 export type Route =
-  | { name: 'home' } | { name: 'venues' } | { name: 'venue'; id: number } | { name: 'audit' } | { name: 'tables' } | { name: 'history' } | { name: 'staff' } | { name: 'menu' } | { name: 'customers' } | { name: 'bookings' } | { name: 'my-bookings' } | { name: 'my-history' }
+  | { name: 'home' } | { name: 'venues' } | { name: 'venue'; id: number } | { name: 'audit' } | { name: 'tables' } | { name: 'history' } | { name: 'staff' } | { name: 'menu' } | { name: 'customers' } | { name: 'bookings' } | { name: 'my-bookings' } | { name: 'my-history' } | { name: 'my-rewards' } | { name: 'game' } | { name: 'checkin-code' }
   | { name: 'customer-entry'; slug: string } | { name: 'design' };
 
 export function parseRoute(hash: string, dev = import.meta.env.DEV): Route {
@@ -20,6 +20,9 @@ export function parseRoute(hash: string, dev = import.meta.env.DEV): Route {
   if (path === '/bookings') return { name: 'bookings' };
   if (path === '/my/bookings') return { name: 'my-bookings' };
   if (path === '/my/history') return { name: 'my-history' };
+  if (path === '/my/rewards') return { name: 'my-rewards' };
+  if (path === '/game') return { name: 'game' };
+  if (path === '/checkin-code') return { name: 'checkin-code' };
   const entry = /^\/c\/([a-z0-9]+(?:-[a-z0-9]+)*)$/.exec(path);
   if (entry) return { name: 'customer-entry', slug: entry[1] };
   if (path === '/staff') return { name: 'staff' };
@@ -36,6 +39,8 @@ const NAV: NavItem[] = [
   { href: '#/venues', label: 'Quán', roles: ['platform_admin'], active: r => r.name === 'venues' || r.name === 'venue' },
   { href: '#/tables', label: 'Bàn và giá', roles: ['owner'], active: r => r.name === 'tables' },
   { href: '#/bookings', label: 'Đặt bàn', roles: ['owner', 'staff'], active: r => r.name === 'bookings' },
+  { href: '#/checkin-code', label: 'Mã check-in', roles: ['owner', 'staff'], active: r => r.name === 'checkin-code' },
+  { href: '#/game', label: 'Gamification', roles: ['owner'], active: r => r.name === 'game' },
   { href: '#/customers', label: 'Khách hàng', roles: ['owner', 'staff'], active: r => r.name === 'customers' },
   { href: '#/menu', label: 'Menu dịch vụ', roles: ['owner'], active: r => r.name === 'menu' },
   { href: '#/staff', label: 'Nhân viên', roles: ['owner'], active: r => r.name === 'staff' },

@@ -4,12 +4,13 @@ import { Button } from '../../ui/components';
 import { BrandBall } from '../../ui/FeltTable';
 import { ThemeToggle } from '../../ui/ThemeToggle';
 
-export type CustomerPage = 'book' | 'bookings' | 'history';
+export type CustomerPage = 'book' | 'bookings' | 'history' | 'rewards';
 
 const NAV: Array<{ page: CustomerPage; href: string; label: string }> = [
   { page: 'book', href: '#/', label: 'Đặt bàn' },
   { page: 'bookings', href: '#/my/bookings', label: 'Lịch đặt' },
-  { page: 'history', href: '#/my/history', label: 'Lịch sử chơi' },
+  { page: 'rewards', href: '#/my/rewards', label: 'Quà tặng' },
+  { page: 'history', href: '#/my/history', label: 'Lịch sử' },
 ];
 
 /** Khung dành cho khách, ưu tiên điện thoại: thanh điều hướng cố định ở đáy màn hình. */

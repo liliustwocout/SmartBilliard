@@ -13,6 +13,9 @@ import { CustomerAuthPage } from './pages/customer/CustomerAuthPage';
 import { CustomerShell } from './pages/customer/CustomerShell';
 import { MyBookingsPage } from './pages/customer/MyBookingsPage';
 import { MyHistoryPage } from './pages/customer/MyHistoryPage';
+import { RewardsPage } from './pages/customer/RewardsPage';
+import { CheckinCodePage } from './pages/shop/CheckinCodePage';
+import { GamePage } from './pages/shop/GamePage';
 import { BookingsPage } from './pages/shop/BookingsPage';
 import { CustomersPage } from './pages/shop/CustomersPage';
 import { MenuPage } from './pages/shop/MenuPage';
@@ -35,6 +38,8 @@ function Page({ route, user }: { route: Route; user: AuthUser }) {
   }
   if (route.name === 'history') return <HistoryPage />;
   if (route.name === 'bookings') return <BookingsPage />;
+  if (route.name === 'checkin-code') return <CheckinCodePage />;
+  if (route.name === 'game' && user.role === 'owner') return <GamePage />;
   if (route.name === 'customers') return <CustomersPage />;
   if (route.name === 'tables' && user.role === 'owner') return <TablesManagePage />;
   if (route.name === 'menu' && user.role === 'owner') return <MenuPage />;
@@ -59,10 +64,10 @@ function Router() {
   }
   if (state.user.must_change_password) return <ChangePasswordPage />;
   if (state.user.role === 'customer') {
-    const page = route.name === 'my-bookings' ? 'bookings' : route.name === 'my-history' ? 'history' : 'book';
+    const page = route.name === 'my-bookings' ? 'bookings' : route.name === 'my-history' ? 'history' : route.name === 'my-rewards' ? 'rewards' : 'book';
     return (
       <CustomerShell page={page}>
-        {page === 'bookings' ? <MyBookingsPage /> : page === 'history' ? <MyHistoryPage /> : <BookPage />}
+        {page === 'bookings' ? <MyBookingsPage /> : page === 'history' ? <MyHistoryPage /> : page === 'rewards' ? <RewardsPage /> : <BookPage />}
       </CustomerShell>
     );
   }

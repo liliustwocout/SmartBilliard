@@ -25,6 +25,7 @@ function InvoiceBody({ venueId, sessionId }: { venueId: number; sessionId: strin
           {data.items.map(item => (
             <tr key={item.id}><td>{item.name} × {item.quantity}</td><td className="right num">{money(item.amount)}</td></tr>
           ))}
+          {data.voucher_discount > 0 && <tr><td>Voucher</td><td className="right num">− {money(data.voucher_discount)}</td></tr>}
           <tr><td><strong>Tổng cộng</strong></td><td className="right num" data-testid="invoice-total" style={{ fontSize: 'var(--text-xl)' }}>{money(data.total)}</td></tr>
           {data.deposit_applied > 0 && <>
             <tr><td>Đã cọc (mô phỏng)</td><td className="right num">− {money(data.deposit_applied)}</td></tr>

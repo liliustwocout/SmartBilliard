@@ -248,7 +248,7 @@ describe('checkout with a deposit', () => {
   it('shows the deposit deduction and collects only the amount due', async () => {
     const table = { id: 2, name: 'Bàn 2', table_type: 'pool', hourly_rate: 60000, status: 'ACTIVE', session: {
       id: 'sess-1', table_id: 2, table_name: 'Bàn 2', status: 'ACTIVE', started_at: 't', ended_at: null, rate_snapshot: 60000, customer_id: 9, void_reason: null,
-      elapsed_seconds: 7200, billable_minutes: 120, table_amount: 120000, items_amount: 0, amount_vnd: 120000, deposit_applied: 50000, amount_due: 70000 } };
+      elapsed_seconds: 7200, billable_minutes: 120, table_amount: 120000, items_amount: 0, amount_vnd: 120000, deposit_applied: 50000, voucher_discount: 0, amount_due: 70000 } };
     mock([['GET /api/auth/me', () => json(staff)], ['GET /api/venues/1/tables', () => json({ server_time: 't', tables: [table] })],
       ['GET /api/venues/1/revenue/today', () => json({ date: 'd', total_vnd: 0, session_count: 0, by_table: [] })],
       ['GET /api/venues/1/sessions/sess-1/quote', () => json({ ...table.session, items: [] })],

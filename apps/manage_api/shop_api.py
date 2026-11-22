@@ -269,7 +269,7 @@ def build_shop_api(get_db: Callable, require_venue_roles: Callable, now_fn: Call
             "started_at": iso(session.started_at), "ended_at": iso(session.ended_at),
             "billable_minutes": session.billable_minutes, "rate": session.rate_snapshot,
             "table_amount": session.table_amount, "items": lines(db, session.id), "items_amount": session.items_amount,
-            "total": session.total_amount, "deposit_applied": session.deposit_applied or 0,
+            "total": session.total_amount, "voucher_discount": session.voucher_discount or 0, "deposit_applied": session.deposit_applied or 0,
             "amount_due": (session.total_amount or 0) - (session.deposit_applied or 0), "payment_method": payment.method if payment else None,
             "cashier": cashier.display_name if cashier else None, "customer": customer.display_name if customer else None,
         }

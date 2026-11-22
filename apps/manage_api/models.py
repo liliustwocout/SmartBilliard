@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, String, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, String, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 ROLES = ("platform_admin", "owner", "staff", "customer")
@@ -113,6 +113,8 @@ class PlaySession(Base):
     void_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
     booking_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     deposit_applied: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    voucher_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    voucher_discount: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class Payment(Base):
@@ -215,3 +217,162 @@ class Deposit(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     settled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+# ---------------- Gamification ----------------
+
+class VenueNetwork(Base):
+    """IP/CIDR công cộng của quán, dùng để xác minh check-in qua wifi quán."""
+    __tablename__ = "venue_networks"
+    __table_args__ = (Index("uq_network_per_venue", "venue_id", "cidr", unique=True),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"), index=True)
+    cidr: Mapped[str] = mapped_column(String(50))
+    label: Mapped[str | None] = mapped_column(String(60), nullable=True)
+
+
+class GameSettings(Base):
+    __tablename__ = "game_settings"
+    __table_args__ = (
+        CheckConstraint("checkin_mode IN ('off', 'wifi', 'code', 'wifi_or_code', 'wifi_and_code')"),
+        CheckConstraint("checkin_points >= 0 AND checkin_points <= 1000"),
+        CheckConstraint("min_daily_prizes >= 0 AND min_daily_prizes <= 2"),
+        CheckConstraint("max_daily_prizes >= min_daily_prizes AND max_daily_prizes <= 50"),
+        CheckConstraint("expected_daily_checkins >= 1 AND expected_daily_checkins <= 1000"),
+        CheckConstraint("spin_expiry_days >= 1 AND spin_expiry_days <= 14"),
+        CheckConstraint("code_rotation_seconds >= 60 AND code_rotation_seconds <= 3600"),
+    )
+    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"), primary_key=True)
+    checkin_mode: Mapped[str] = mapped_column(String(16), default="wifi")
+    checkin_points: Mapped[int] = mapped_column(Integer, default=10)
+    streak_milestones: Mapped[list] = mapped_column(JSON, default=list)
+    wheel_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    min_daily_prizes: Mapped[int] = mapped_column(Integer, default=1)
+    max_daily_prizes: Mapped[int] = mapped_column(Integer, default=2)
+    expected_daily_checkins: Mapped[int] = mapped_column(Integer, default=20)
+    spin_expiry_days: Mapped[int] = mapped_column(Integer, default=1)
+    code_secret: Mapped[str] = mapped_column(String(64), default="")
+    code_rotation_seconds: Mapped[int] = mapped_column(Integer, default=300)
+
+
+class CustomerGame(Base):
+    __tablename__ = "customer_game"
+    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"), primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    points: Mapped[int] = mapped_column(Integer, default=0)
+    streak: Mapped[int] = mapped_column(Integer, default=0)
+    best_streak: Mapped[int] = mapped_column(Integer, default=0)
+    last_checkin_day: Mapped[str | None] = mapped_column(String(10), nullable=True)
+
+
+class Checkin(Base):
+    __tablename__ = "checkins"
+    __table_args__ = (Index("uq_checkin_per_day", "venue_id", "customer_id", "day", unique=True),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"))
+    customer_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    day: Mapped[str] = mapped_column(String(10))
+    method: Mapped[str] = mapped_column(String(20))
+    ip: Mapped[str] = mapped_column(String(45))
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class PointLedger(Base):
+    """Sổ điểm chỉ thêm. (reason, ref) duy nhất theo khách nên mọi khoản cộng đều idempotent."""
+    __tablename__ = "point_ledger"
+    __table_args__ = (Index("uq_ledger_ref", "venue_id", "customer_id", "reason", "ref", unique=True),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"))
+    customer_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    delta: Mapped[int] = mapped_column(Integer)
+    reason: Mapped[str] = mapped_column(String(30))
+    ref: Mapped[str] = mapped_column(String(60))
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class WheelPrize(Base):
+    __tablename__ = "wheel_prizes"
+    __table_args__ = (
+        CheckConstraint("kind IN ('points', 'discount_vnd', 'free_minutes', 'nothing')"),
+        CheckConstraint("weight_bp >= 0 AND weight_bp <= 10000"),
+        CheckConstraint("status IN ('ACTIVE', 'INACTIVE')"),
+        CheckConstraint("value >= 0"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"), index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    kind: Mapped[str] = mapped_column(String(16))
+    value: Mapped[int] = mapped_column(Integer, default=0)
+    weight_bp: Mapped[int] = mapped_column(Integer)  # 10000 = 100%
+    stock_remaining: Mapped[int | None] = mapped_column(Integer, nullable=True)  # None = không giới hạn
+    status: Mapped[str] = mapped_column(String(10), default="ACTIVE")
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    voucher_valid_days: Mapped[int] = mapped_column(Integer, default=30)
+
+
+class WheelDailyPlan(Base):
+    """Kế hoạch thưởng đảm bảo của một ngày: vị trí các lượt quay được định sẵn là trúng."""
+    __tablename__ = "wheel_daily_plan"
+    __table_args__ = (Index("uq_plan_day", "venue_id", "day", unique=True),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"))
+    day: Mapped[str] = mapped_column(String(10))
+    expected: Mapped[int] = mapped_column(Integer)
+    guaranteed: Mapped[list] = mapped_column(JSON, default=list)
+    min_prizes: Mapped[int] = mapped_column(Integer)
+    max_prizes: Mapped[int] = mapped_column(Integer)
+    spin_count: Mapped[int] = mapped_column(Integer, default=0)
+    prizes_given: Mapped[int] = mapped_column(Integer, default=0)
+    guaranteed_given: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class SpinTicket(Base):
+    __tablename__ = "spin_tickets"
+    __table_args__ = (CheckConstraint("status IN ('UNUSED', 'USED', 'EXPIRED')"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"))
+    customer_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    day: Mapped[str] = mapped_column(String(10))
+    status: Mapped[str] = mapped_column(String(8), default="UNUSED")
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    checkin_id: Mapped[int] = mapped_column(ForeignKey("checkins.id"), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class SpinResult(Base):
+    """Kết quả quay: lưu bản chụp giải và tỷ lệ tại thời điểm quay."""
+    __tablename__ = "spin_results"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("spin_tickets.id"), unique=True)
+    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"), index=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    prize_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    prize_name: Mapped[str] = mapped_column(String(80))
+    prize_kind: Mapped[str] = mapped_column(String(16))
+    prize_value: Mapped[int] = mapped_column(Integer)
+    odds_bp: Mapped[int] = mapped_column(Integer)
+    spin_index: Mapped[int] = mapped_column(Integer)
+    forced: Mapped[bool] = mapped_column(Boolean, default=False)
+    day: Mapped[str] = mapped_column(String(10))
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class Voucher(Base):
+    __tablename__ = "vouchers"
+    __table_args__ = (
+        CheckConstraint("kind IN ('discount_vnd', 'free_minutes')"),
+        CheckConstraint("status IN ('UNUSED', 'USED', 'EXPIRED')"),
+        CheckConstraint("value > 0"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"), index=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    code: Mapped[str] = mapped_column(String(12), unique=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    value: Mapped[int] = mapped_column(Integer)
+    label: Mapped[str] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(8), default="UNUSED")
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    source_result_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    used_session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)

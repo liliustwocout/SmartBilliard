@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from apps.manage_api.auth import Principal, audit, utc_naive
 from apps.manage_api.billing import quote
-from apps.manage_api.models import BilliardTable, Deposit, Payment, PlaySession, SessionItem, User
+from apps.manage_api.models import BilliardTable, Deposit, Payment, PlaySession, SessionItem, User, Voucher
 
 TableType = Literal["pool", "carom", "snooker", "other"]
 MAX_RATE = 10_000_000
@@ -40,6 +40,7 @@ class OpenBody(BaseModel):
 
 class CheckoutBody(BaseModel):
     payment_method: Literal["cash", "transfer"]
+    voucher_id: int | None = None
 
 
 class VoidBody(BaseModel):
@@ -93,8 +94,32 @@ def build_venue_api(get_db: Callable, require_venue_roles: Callable, now_fn: Cal
             return 0
         return db.scalar(select(Deposit.amount).where(Deposit.booking_id == session.booking_id, Deposit.status == "PAID")) or 0
 
+    def voucher_discount_for(voucher: Voucher, table_amount: int, gross: int, rate: int) -> int:
+        if voucher.kind == "discount_vnd":
+            return min(voucher.value, gross)
+        return min(table_amount, (voucher.value * rate + 59) // 60)  # free_minutes: chỉ trừ vào tiền giờ
+
+    def usable_voucher(db: Session, venue_id: int, session: PlaySession, voucher_id: int, now: datetime) -> Voucher:
+        voucher = db.get(Voucher, voucher_id)
+        if voucher is None or voucher.venue_id != venue_id:
+            raise HTTPException(404, "Không tìm thấy voucher.")
+        if session.customer_id is None or voucher.customer_id != session.customer_id:
+            raise HTTPException(400, "Voucher này thuộc về khách khác. Hãy gắn đúng khách vào phiên trước.")
+        if voucher.status != "UNUSED":
+            raise HTTPException(409, "Voucher đã được dùng.")
+        if voucher.expires_at <= utc_naive(now):
+            raise HTTPException(409, "Voucher đã hết hạn.")
+        return voucher
+
+    def available_vouchers(db: Session, session: PlaySession, now: datetime) -> list[dict]:
+        if session.customer_id is None:
+            return []
+        rows = db.scalars(select(Voucher).where(Voucher.customer_id == session.customer_id, Voucher.venue_id == session.venue_id,
+                                                Voucher.status == "UNUSED", Voucher.expires_at > utc_naive(now)).order_by(Voucher.expires_at)).all()
+        return [{"id": v.id, "code": v.code, "label": v.label, "kind": v.kind, "value": v.value, "expires_at": iso(v.expires_at)} for v in rows]
+
     def session_view(session: PlaySession, table_name: str | None, now: datetime, items_amount: int = 0,
-                     items: list[dict] | None = None, deposit: int = 0) -> dict:
+                     items: list[dict] | None = None, deposit: int = 0, voucher_discount: int = 0) -> dict:
         end = session.ended_at or utc_naive(now)
         live = quote(session.started_at, end, session.rate_snapshot)
         table_amount = session.table_amount if session.table_amount is not None else live["amount_vnd"]
@@ -106,7 +131,9 @@ def build_venue_api(get_db: Callable, require_venue_roles: Callable, now_fn: Cal
             "elapsed_seconds": live["elapsed_seconds"],
             "billable_minutes": session.billable_minutes if session.billable_minutes is not None else live["billable_minutes"],
             "table_amount": table_amount, "items_amount": items_total,
-            "amount_vnd": session.total_amount if session.total_amount is not None else table_amount + items_total,
+            "voucher_discount": session.voucher_discount if session.voucher_discount is not None else voucher_discount,
+            "amount_vnd": session.total_amount if session.total_amount is not None
+            else table_amount + items_total - voucher_discount,
         }
         if items is not None:
             view["items"] = items
@@ -198,10 +225,19 @@ def build_venue_api(get_db: Callable, require_venue_roles: Callable, now_fn: Cal
         return session_view(session, table.name, now)
 
     @router.get("/sessions/{session_id}/quote")
-    def session_quote(venue_id: int, session_id: str, _: Operator, db: Db):
+    def session_quote(venue_id: int, session_id: str, _: Operator, db: Db, voucher_id: int | None = None):
         session = session_or_404(db, venue_id, session_id)
-        return session_view(session, db.get(BilliardTable, session.table_id).name, now_fn(),
-                            items_sum(db, [session.id]).get(session.id, 0), item_lines(db, session.id), paid_deposit(db, session))
+        now = now_fn()
+        table_name = db.get(BilliardTable, session.table_id).name
+        items_total = items_sum(db, [session.id]).get(session.id, 0)
+        discount = 0
+        if voucher_id is not None and session.status == "ACTIVE":
+            voucher = usable_voucher(db, venue_id, session, voucher_id, now)
+            live = quote(session.started_at, utc_naive(now), session.rate_snapshot)["amount_vnd"]
+            discount = voucher_discount_for(voucher, live, live + items_total, session.rate_snapshot)
+        view = session_view(session, table_name, now, items_total, item_lines(db, session.id), paid_deposit(db, session), discount)
+        view["available_vouchers"] = available_vouchers(db, session, now) if session.status == "ACTIVE" else []
+        return view
 
     @router.post("/sessions/{session_id}/checkout")
     def checkout(venue_id: int, session_id: str, body: CheckoutBody, principal: Operator, db: Db):
@@ -214,6 +250,7 @@ def build_venue_api(get_db: Callable, require_venue_roles: Callable, now_fn: Cal
             return {**session_view(session, table_name, now, items=item_lines(db, session.id)), "duplicate": True}
         end = utc_naive(now)
         result = quote(session.started_at, end, session.rate_snapshot)
+        voucher = usable_voucher(db, venue_id, session, body.voucher_id, now) if body.voucher_id is not None else None
         # Bước 1: chiếm quyền chốt phiên. Giao dịch giữ khoá ghi của SQLite tới khi commit nên không ai chen món vào được.
         claimed = db.execute(update(PlaySession).where(PlaySession.id == session.id, PlaySession.status == "ACTIVE").values(
             status="PAID", ended_at=end, closed_by=principal.user.id))
@@ -223,7 +260,16 @@ def build_venue_api(get_db: Callable, require_venue_roles: Callable, now_fn: Cal
             return {**session_view(session, table_name, now, items=item_lines(db, session.id)), "duplicate": True}
         # Bước 2: tính tiền món trong cùng giao dịch rồi chốt các con số.
         items_total = items_sum(db, [session.id]).get(session.id, 0)
-        total = result["amount_vnd"] + items_total
+        gross = result["amount_vnd"] + items_total
+        discount = 0
+        if voucher is not None:
+            discount = voucher_discount_for(voucher, result["amount_vnd"], gross, session.rate_snapshot)
+            used = db.execute(update(Voucher).where(Voucher.id == voucher.id, Voucher.status == "UNUSED").values(
+                status="USED", used_session_id=session.id))
+            if used.rowcount != 1:  # voucher vừa bị dùng ở nơi khác
+                db.rollback()
+                raise HTTPException(409, "Voucher đã được dùng.")
+        total = gross - discount
         # Tiền cọc (giả lập) đã trả trước được trừ vào hoá đơn; phần cọc thừa được hoàn.
         deposit = db.scalar(select(Deposit).where(Deposit.booking_id == session.booking_id, Deposit.status == "PAID")) if session.booking_id else None
         applied = min(deposit.amount, total) if deposit else 0
@@ -231,11 +277,12 @@ def build_venue_api(get_db: Callable, require_venue_roles: Callable, now_fn: Cal
             deposit.status, deposit.applied_amount, deposit.refunded_amount, deposit.settled_at = "APPLIED", applied, deposit.amount - applied, end
         db.execute(update(PlaySession).where(PlaySession.id == session.id).values(
             total_amount=total, table_amount=result["amount_vnd"], items_amount=items_total,
-            billable_minutes=result["billable_minutes"], deposit_applied=applied))
+            billable_minutes=result["billable_minutes"], deposit_applied=applied,
+            voucher_id=voucher.id if voucher else None, voucher_discount=discount))
         db.add(Payment(session_id=session.id, venue_id=venue_id, method=body.payment_method, amount=total - applied,
                        created_by=principal.user.id, created_at=end))
         audit(db, now, "session_paid", actor=principal.user, venue_id=venue_id, target=table_name,
-              detail={"session_id": session.id, "amount": total, "deposit_applied": applied, "table_amount": result["amount_vnd"],
+              detail={"session_id": session.id, "amount": total, "deposit_applied": applied, "voucher_discount": discount, "table_amount": result["amount_vnd"],
                       "items_amount": items_total, "method": body.payment_method})
         db.commit()
         db.refresh(session)

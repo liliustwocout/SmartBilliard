@@ -21,7 +21,7 @@ const staff: AuthUser = { ...owner, id: 3, role: 'staff', login: 's', display_na
 const baseSession: SessionView = {
   id: 'sess-1', table_id: 2, table_name: 'Bàn 2', status: 'ACTIVE', started_at: '2026-11-22T03:00:00Z', ended_at: null,
   rate_snapshot: 60000, customer_id: null, void_reason: null, elapsed_seconds: 3600, billable_minutes: 60,
-  table_amount: 60000, items_amount: 0, amount_vnd: 60000, items: [], deposit_applied: 0, amount_due: 60000,
+  table_amount: 60000, items_amount: 0, amount_vnd: 60000, items: [], deposit_applied: 0, voucher_discount: 0, amount_due: 60000,
 };
 const playing: TableRow = { id: 2, name: 'Bàn 2', table_type: 'pool', hourly_rate: 60000, status: 'ACTIVE', session: baseSession };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
@@ -112,7 +112,7 @@ describe('items and customer inside checkout', () => {
     const invoice: Invoice = {
       venue_name: 'Quán A', invoice_no: 'ABCD1234', table_name: 'Bàn 2', started_at: '2026-11-22T03:00:00Z', ended_at: '2026-11-22T04:00:00Z',
       billable_minutes: 60, rate: 60000, table_amount: 60000, items: [{ id: 1, product_id: 5, name: 'Phấn', unit_price: 5000, quantity: 2, amount: 10000 }],
-      items_amount: 10000, total: 70000, deposit_applied: 0, amount_due: 70000, payment_method: 'cash', cashier: 'Thu ngân', customer: null,
+      items_amount: 10000, total: 70000, deposit_applied: 0, voucher_discount: 0, amount_due: 70000, payment_method: 'cash', cashier: 'Thu ngân', customer: null,
     };
     mock(staff, [
       ['GET /api/venues/1/sessions/sess-1/quote', () => json(baseSession)],
