@@ -15,6 +15,7 @@ from starlette.responses import JSONResponse
 
 from apps.manage_api.config import ManageSettings
 from apps.manage_api.admin import build_admin
+from apps.manage_api.shop_api import build_shop_api
 from apps.manage_api.venue_api import build_venue_api
 from apps.manage_api.auth import Principal, build_auth
 from apps.manage_api.textutil import fold
@@ -65,6 +66,7 @@ def create_app(settings: ManageSettings | None = None,
     app.include_router(auth_router)
     app.include_router(build_admin(get_db, require_roles, clock))
     app.include_router(build_venue_api(get_db, require_venue_roles, clock, settings.timezone))
+    app.include_router(build_shop_api(get_db, require_venue_roles, clock))
     app.state.clock = clock
 
     @app.get("/api/venues/{venue_id}")

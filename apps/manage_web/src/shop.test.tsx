@@ -20,7 +20,7 @@ const staff: AuthUser = { ...owner, id: 3, role: 'staff', login: 's', display_na
 
 const session: SessionView = {
   id: 'sess-1', table_id: 2, table_name: 'Bàn 2', status: 'ACTIVE', started_at: '2026-11-22T03:00:00Z', ended_at: null,
-  rate_snapshot: 60000, customer_id: null, void_reason: null, elapsed_seconds: 3725, billable_minutes: 63, amount_vnd: 63000,
+  rate_snapshot: 60000, customer_id: null, void_reason: null, elapsed_seconds: 3725, billable_minutes: 63, amount_vnd: 63000, table_amount: 63000, items_amount: 0, items: [],
 };
 const freeTable: TableRow = { id: 1, name: 'Bàn 1', table_type: 'pool', hourly_rate: 60000, status: 'ACTIVE', session: null };
 const playingTable: TableRow = { id: 2, name: 'Bàn 2', table_type: 'pool', hourly_rate: 60000, status: 'ACTIVE', session };
@@ -35,6 +35,8 @@ function mock(user: AuthUser, extra: Array<[string, (init?: RequestInit) => Resp
     ['GET /api/auth/me', () => json(user)],
     ['GET /api/venues/1/tables', () => json({ server_time: 't', tables })],
     ['GET /api/venues/1/revenue/today', () => json(revenue)],
+    ['GET /api/venues/1/products', () => json([])],
+    ['GET /api/venues/1/customers', () => json({ total: 0, items: [] })],
     ...extra,
   ];
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {

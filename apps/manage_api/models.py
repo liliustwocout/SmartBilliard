@@ -105,6 +105,8 @@ class PlaySession(Base):
     status: Mapped[str] = mapped_column(String(10), default="ACTIVE")
     rate_snapshot: Mapped[int] = mapped_column(Integer)
     total_amount: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    table_amount: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    items_amount: Mapped[int | None] = mapped_column(Integer, nullable=True)
     billable_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     opened_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     closed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
@@ -120,5 +122,36 @@ class Payment(Base):
     venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"), index=True)
     method: Mapped[str] = mapped_column(String(10))
     amount: Mapped[int] = mapped_column(Integer)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class Product(Base):
+    """Món/dịch vụ bán thêm trong phiên (nước uống, phấn, đồ ăn...)."""
+    __tablename__ = "products"
+    __table_args__ = (
+        CheckConstraint("price >= 0 AND price <= 10000000"),
+        CheckConstraint("status IN ('ACTIVE', 'INACTIVE')"),
+        Index("uq_product_name_per_venue", "venue_id", "name", unique=True),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"), index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    price: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(10), default="ACTIVE")
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class SessionItem(Base):
+    """Dòng dịch vụ của một phiên; tên và giá được chốt lúc thêm."""
+    __tablename__ = "session_items"
+    __table_args__ = (CheckConstraint("quantity >= 1 AND quantity <= 99"), CheckConstraint("unit_price >= 0"))
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("play_sessions.id"), index=True)
+    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"))
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
+    name_snapshot: Mapped[str] = mapped_column(String(80))
+    unit_price: Mapped[int] = mapped_column(Integer)
+    quantity: Mapped[int] = mapped_column(Integer)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime)

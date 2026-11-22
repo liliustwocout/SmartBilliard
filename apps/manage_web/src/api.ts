@@ -54,10 +54,20 @@ export interface SessionView {
   id: string; table_id: number; table_name: string | null; status: 'ACTIVE' | 'PAID' | 'VOID';
   started_at: string; ended_at: string | null; rate_snapshot: number; customer_id: number | null; void_reason: string | null;
   elapsed_seconds: number; billable_minutes: number; amount_vnd: number;
+  table_amount: number; items_amount: number; items?: ItemLine[];
 }
+export interface ItemLine { id: number; product_id: number; name: string; unit_price: number; quantity: number; amount: number }
 export interface TableRow {
   id: number; name: string; table_type: TableType; hourly_rate: number; status: 'ACTIVE' | 'INACTIVE'; session: SessionView | null;
 }
 export interface TablesResponse { server_time: string; tables: TableRow[] }
 export interface Revenue { date: string; total_vnd: number; session_count: number; by_table: Array<{ table_id: number; table_name: string | null; sessions: number; amount_vnd: number }> }
 export type PaymentMethod = 'cash' | 'transfer';
+
+export interface StaffRow { id: number; login: string; display_name: string; status: 'ACTIVE' | 'DISABLED'; must_change_password: boolean; created_at: string }
+export interface ProductRow { id: number; name: string; price: number; status: 'ACTIVE' | 'INACTIVE' }
+export interface Invoice {
+  venue_name: string; invoice_no: string; table_name: string; started_at: string; ended_at: string; billable_minutes: number; rate: number;
+  table_amount: number; items: ItemLine[]; items_amount: number; total: number; payment_method: PaymentMethod | null;
+  cashier: string | null; customer: string | null;
+}

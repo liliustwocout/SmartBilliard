@@ -5,6 +5,7 @@ import { useAuth } from '../../auth';
 import { dateTime, duration, money } from '../../format';
 import { useLoad } from '../../useLoad';
 import { Badge, Button, Card, DataTable, EmptyState, ErrorState, Field, SelectField, Skeleton } from '../../ui/components';
+import { InvoiceDialog } from '../../ui/InvoiceDialog';
 
 const PAGE = 25;
 type StatusFilter = '' | 'ACTIVE' | 'PAID' | 'VOID';
@@ -24,6 +25,7 @@ export function HistoryPage() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [page, setPage] = useState(0);
+  const [invoiceFor, setInvoiceFor] = useState<string | null>(null);
 
   const query = new URLSearchParams({ limit: String(PAGE), offset: String(page * PAGE) });
   if (status) query.set('status', status);
@@ -58,6 +60,7 @@ export function HistoryPage() {
               { key: 'dur', header: 'Thời gian', render: s => <span className="num">{duration(s.elapsed_seconds)}</span> },
               { key: 'status', header: 'Trạng thái', render: s => <StatusBadge status={s.status} /> },
               { key: 'amount', header: 'Tiền', align: 'right', render: s => <span className="num">{s.status === 'VOID' ? '—' : money(s.amount_vnd)}</span> },
+              { key: 'invoice', header: '', align: 'right', render: s => s.status === 'PAID' ? <Button size="sm" variant="ghost" onClick={() => setInvoiceFor(s.id)}>Hoá đơn</Button> : null },
             ]} />
         )}
       {data && data.total > PAGE && (
@@ -69,6 +72,7 @@ export function HistoryPage() {
           </div>
         </div>
       )}
+      <InvoiceDialog venueId={venueId} sessionId={invoiceFor} onClose={() => setInvoiceFor(null)} />
     </>
   );
 }

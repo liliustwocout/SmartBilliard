@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from apps.manage_api.auth import Principal, audit, utc_naive
 from apps.manage_api.billing import quote
-from apps.manage_api.models import BilliardTable, Payment, PlaySession, User
+from apps.manage_api.models import BilliardTable, Payment, PlaySession, SessionItem, User
 
 TableType = Literal["pool", "carom", "snooker", "other"]
 MAX_RATE = 10_000_000
@@ -76,28 +76,49 @@ def build_venue_api(get_db: Callable, require_venue_roles: Callable, now_fn: Cal
             raise HTTPException(404, "Không tìm thấy phiên.")
         return session
 
-    def session_view(session: PlaySession, table_name: str | None, now: datetime) -> dict:
+    def items_sum(db: Session, session_ids: list[str]) -> dict[str, int]:
+        if not session_ids:
+            return {}
+        rows = db.execute(select(SessionItem.session_id, func.sum(SessionItem.unit_price * SessionItem.quantity))
+                          .where(SessionItem.session_id.in_(session_ids)).group_by(SessionItem.session_id)).all()
+        return {sid: int(total) for sid, total in rows}
+
+    def item_lines(db: Session, session_id: str) -> list[dict]:
+        rows = db.scalars(select(SessionItem).where(SessionItem.session_id == session_id).order_by(SessionItem.id)).all()
+        return [{"id": i.id, "product_id": i.product_id, "name": i.name_snapshot, "unit_price": i.unit_price,
+                 "quantity": i.quantity, "amount": i.unit_price * i.quantity} for i in rows]
+
+    def session_view(session: PlaySession, table_name: str | None, now: datetime, items_amount: int = 0,
+                     items: list[dict] | None = None) -> dict:
         end = session.ended_at or utc_naive(now)
         live = quote(session.started_at, end, session.rate_snapshot)
-        return {
+        table_amount = session.table_amount if session.table_amount is not None else live["amount_vnd"]
+        items_total = session.items_amount if session.items_amount is not None else items_amount
+        view = {
             "id": session.id, "table_id": session.table_id, "table_name": table_name, "status": session.status,
             "started_at": iso(session.started_at), "ended_at": iso(session.ended_at), "rate_snapshot": session.rate_snapshot,
             "customer_id": session.customer_id, "void_reason": session.void_reason,
             "elapsed_seconds": live["elapsed_seconds"],
             "billable_minutes": session.billable_minutes if session.billable_minutes is not None else live["billable_minutes"],
-            "amount_vnd": session.total_amount if session.total_amount is not None else live["amount_vnd"],
+            "table_amount": table_amount, "items_amount": items_total,
+            "amount_vnd": session.total_amount if session.total_amount is not None else table_amount + items_total,
         }
+        if items is not None:
+            view["items"] = items
+        return view
 
-    def table_view(table: BilliardTable, session: PlaySession | None, now: datetime) -> dict:
+    def table_view(table: BilliardTable, session: PlaySession | None, now: datetime, items_amount: int = 0) -> dict:
         return {"id": table.id, "name": table.name, "table_type": table.table_type, "hourly_rate": table.hourly_rate,
-                "status": table.status, "session": session_view(session, table.name, now) if session else None}
+                "status": table.status, "session": session_view(session, table.name, now, items_amount) if session else None}
 
     @router.get("/tables")
     def list_tables(venue_id: int, _: Operator, db: Db):
         now = now_fn()
         tables = db.scalars(select(BilliardTable).where(BilliardTable.venue_id == venue_id).order_by(BilliardTable.id)).all()
         active = {s.table_id: s for s in db.scalars(select(PlaySession).where(PlaySession.venue_id == venue_id, PlaySession.status == "ACTIVE"))}
-        return {"server_time": iso(utc_naive(now)), "tables": [table_view(t, active.get(t.id), now) for t in tables]}
+        sums = items_sum(db, [s.id for s in active.values()])
+        return {"server_time": iso(utc_naive(now)),
+                "tables": [table_view(t, active.get(t.id), now, sums.get(active[t.id].id, 0) if t.id in active else 0) for t in tables]}
 
     @router.post("/tables", status_code=201)
     def create_table(venue_id: int, body: TableCreate, principal: OwnerOnly, db: Db):
@@ -171,7 +192,8 @@ def build_venue_api(get_db: Callable, require_venue_roles: Callable, now_fn: Cal
     @router.get("/sessions/{session_id}/quote")
     def session_quote(venue_id: int, session_id: str, _: Operator, db: Db):
         session = session_or_404(db, venue_id, session_id)
-        return session_view(session, db.get(BilliardTable, session.table_id).name, now_fn())
+        return session_view(session, db.get(BilliardTable, session.table_id).name, now_fn(),
+                            items_sum(db, [session.id]).get(session.id, 0), item_lines(db, session.id))
 
     @router.post("/sessions/{session_id}/checkout")
     def checkout(venue_id: int, session_id: str, body: CheckoutBody, principal: Operator, db: Db):
@@ -181,23 +203,30 @@ def build_venue_api(get_db: Callable, require_venue_roles: Callable, now_fn: Cal
         if session.status == "VOID":
             raise HTTPException(409, "Phiên đã bị huỷ.")
         if session.status == "PAID":  # bấm lặp / thử lại: trả đúng kết quả đã chốt, không tính tiền lần hai
-            return {**session_view(session, table_name, now), "duplicate": True}
+            return {**session_view(session, table_name, now, items=item_lines(db, session.id)), "duplicate": True}
         end = utc_naive(now)
         result = quote(session.started_at, end, session.rate_snapshot)
+        # Bước 1: chiếm quyền chốt phiên. Giao dịch giữ khoá ghi của SQLite tới khi commit nên không ai chen món vào được.
         claimed = db.execute(update(PlaySession).where(PlaySession.id == session.id, PlaySession.status == "ACTIVE").values(
-            status="PAID", ended_at=end, total_amount=result["amount_vnd"], billable_minutes=result["billable_minutes"],
-            closed_by=principal.user.id))
+            status="PAID", ended_at=end, closed_by=principal.user.id))
         if claimed.rowcount != 1:  # request khác vừa chốt phiên này
             db.rollback()
             db.refresh(session)
-            return {**session_view(session, table_name, now), "duplicate": True}
-        db.add(Payment(session_id=session.id, venue_id=venue_id, method=body.payment_method, amount=result["amount_vnd"],
+            return {**session_view(session, table_name, now, items=item_lines(db, session.id)), "duplicate": True}
+        # Bước 2: tính tiền món trong cùng giao dịch rồi chốt các con số.
+        items_total = items_sum(db, [session.id]).get(session.id, 0)
+        total = result["amount_vnd"] + items_total
+        db.execute(update(PlaySession).where(PlaySession.id == session.id).values(
+            total_amount=total, table_amount=result["amount_vnd"], items_amount=items_total,
+            billable_minutes=result["billable_minutes"]))
+        db.add(Payment(session_id=session.id, venue_id=venue_id, method=body.payment_method, amount=total,
                        created_by=principal.user.id, created_at=end))
         audit(db, now, "session_paid", actor=principal.user, venue_id=venue_id, target=table_name,
-              detail={"session_id": session.id, "amount": result["amount_vnd"], "method": body.payment_method})
+              detail={"session_id": session.id, "amount": total, "table_amount": result["amount_vnd"],
+                      "items_amount": items_total, "method": body.payment_method})
         db.commit()
         db.refresh(session)
-        return {**session_view(session, table_name, now), "duplicate": False}
+        return {**session_view(session, table_name, now, items=item_lines(db, session.id)), "duplicate": False}
 
     @router.post("/sessions/{session_id}/void")
     def void_session(venue_id: int, session_id: str, body: VoidBody, principal: OwnerOnly, db: Db):
@@ -206,6 +235,7 @@ def build_venue_api(get_db: Callable, require_venue_roles: Callable, now_fn: Cal
             raise HTTPException(409, "Chỉ huỷ được phiên đang chơi. Phiên đã thanh toán không huỷ được.")
         now = now_fn()
         session.status, session.ended_at, session.total_amount, session.billable_minutes = "VOID", utc_naive(now), 0, 0
+        session.table_amount, session.items_amount = 0, 0
         session.closed_by, session.void_reason = principal.user.id, body.reason.strip()
         table_name = db.get(BilliardTable, session.table_id).name
         audit(db, now, "session_voided", actor=principal.user, venue_id=venue_id, target=table_name,

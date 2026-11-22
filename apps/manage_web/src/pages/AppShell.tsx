@@ -6,7 +6,7 @@ import { BrandBall } from '../ui/FeltTable';
 import { ThemeToggle } from '../ui/ThemeToggle';
 
 export type Route =
-  | { name: 'home' } | { name: 'venues' } | { name: 'venue'; id: number } | { name: 'audit' } | { name: 'tables' } | { name: 'history' } | { name: 'design' };
+  | { name: 'home' } | { name: 'venues' } | { name: 'venue'; id: number } | { name: 'audit' } | { name: 'tables' } | { name: 'history' } | { name: 'staff' } | { name: 'menu' } | { name: 'customers' } | { name: 'design' };
 
 export function parseRoute(hash: string, dev = import.meta.env.DEV): Route {
   const path = hash.replace(/^#/, '');
@@ -16,6 +16,9 @@ export function parseRoute(hash: string, dev = import.meta.env.DEV): Route {
   if (path === '/audit') return { name: 'audit' };
   if (path === '/tables') return { name: 'tables' };
   if (path === '/history') return { name: 'history' };
+  if (path === '/staff') return { name: 'staff' };
+  if (path === '/menu') return { name: 'menu' };
+  if (path === '/customers') return { name: 'customers' };
   if (dev && path === '/design') return { name: 'design' };
   return { name: 'home' };
 }
@@ -26,6 +29,9 @@ const NAV: NavItem[] = [
   { href: '#/', label: 'Tổng quan', active: r => r.name === 'home' },
   { href: '#/venues', label: 'Quán', roles: ['platform_admin'], active: r => r.name === 'venues' || r.name === 'venue' },
   { href: '#/tables', label: 'Bàn và giá', roles: ['owner'], active: r => r.name === 'tables' },
+  { href: '#/customers', label: 'Khách hàng', roles: ['owner', 'staff'], active: r => r.name === 'customers' },
+  { href: '#/menu', label: 'Menu dịch vụ', roles: ['owner'], active: r => r.name === 'menu' },
+  { href: '#/staff', label: 'Nhân viên', roles: ['owner'], active: r => r.name === 'staff' },
   { href: '#/history', label: 'Lịch sử phiên', roles: ['owner', 'staff'], active: r => r.name === 'history' },
   { href: '#/audit', label: 'Nhật ký', roles: ['platform_admin'], active: r => r.name === 'audit' },
   { href: '#/design', label: 'Giao diện mẫu', devOnly: true, active: r => r.name === 'design' },
