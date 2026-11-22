@@ -1,0 +1,117 @@
+import { useState } from 'react';
+import type { ReactNode } from 'react';
+import { useAuth } from '../auth';
+import type { Role } from '../api';
+import { Button } from '../ui/components';
+import { BrandBall } from '../ui/FeltTable';
+import { ThemeToggle } from '../ui/ThemeToggle';
+
+export type Route =
+  | { name: 'home' } | { name: 'venues' } | { name: 'venue'; id: number } | { name: 'audit' } | { name: 'tables' } | { name: 'history' } | { name: 'staff' } | { name: 'menu' } | { name: 'customers' } | { name: 'bookings' } | { name: 'my-bookings' } | { name: 'my-history' } | { name: 'my-book' } | { name: 'my-spin' } | { name: 'my-wallet' } | { name: 'my-profile' } | { name: 'game' } | { name: 'checkin-code' } | { name: 'reports' }
+  | { name: 'customer-entry'; slug: string } | { name: 'design' };
+
+export function parseRoute(hash: string, dev = import.meta.env.DEV): Route {
+  const path = hash.replace(/^#/, '');
+  if (path === '/venues') return { name: 'venues' };
+  const venue = /^\/venues\/(\d+)$/.exec(path);
+  if (venue) return { name: 'venue', id: Number(venue[1]) };
+  if (path === '/audit') return { name: 'audit' };
+  if (path === '/tables') return { name: 'tables' };
+  if (path === '/history') return { name: 'history' };
+  if (path === '/bookings') return { name: 'bookings' };
+  if (path === '/my/bookings') return { name: 'my-bookings' };
+  if (path === '/my/history') return { name: 'my-history' };
+  if (path === '/my/book') return { name: 'my-book' };
+  if (path === '/my/spin') return { name: 'my-spin' };
+  if (path === '/my/wallet') return { name: 'my-wallet' };
+  if (path === '/my/profile') return { name: 'my-profile' };
+  if (path === '/game') return { name: 'game' };
+  if (path === '/reports') return { name: 'reports' };
+  if (path === '/checkin-code') return { name: 'checkin-code' };
+  const entry = /^\/c\/([a-z0-9]+(?:-[a-z0-9]+)*)$/.exec(path);
+  if (entry) return { name: 'customer-entry', slug: entry[1] };
+  if (path === '/staff') return { name: 'staff' };
+  if (path === '/menu') return { name: 'menu' };
+  if (path === '/customers') return { name: 'customers' };
+  if (dev && path === '/design') return { name: 'design' };
+  return { name: 'home' };
+}
+
+interface NavItem { href: string; label: string; active: (route: Route) => boolean; roles?: Role[]; devOnly?: boolean; group?: string }
+
+const NAV: NavItem[] = [
+  { href: '#/', label: 'Tổng quan', active: r => r.name === 'home' },
+  { href: '#/venues', group: 'Hệ thống', label: 'Quán', roles: ['platform_admin'], active: r => r.name === 'venues' || r.name === 'venue' },
+  { href: '#/tables', group: 'Thiết lập quán', label: 'Bàn và giá', roles: ['owner'], active: r => r.name === 'tables' },
+  { href: '#/bookings', group: 'Vận hành', label: 'Đặt bàn', roles: ['owner', 'staff'], active: r => r.name === 'bookings' },
+  { href: '#/checkin-code', group: 'Vận hành', label: 'Mã check-in', roles: ['owner', 'staff'], active: r => r.name === 'checkin-code' },
+  { href: '#/game', group: 'Thiết lập quán', label: 'Gamification', roles: ['owner'], active: r => r.name === 'game' },
+  { href: '#/customers', group: 'Vận hành', label: 'Khách hàng', roles: ['owner', 'staff'], active: r => r.name === 'customers' },
+  { href: '#/menu', group: 'Thiết lập quán', label: 'Menu dịch vụ', roles: ['owner'], active: r => r.name === 'menu' },
+  { href: '#/staff', group: 'Thiết lập quán', label: 'Nhân viên', roles: ['owner'], active: r => r.name === 'staff' },
+  { href: '#/reports', label: 'Báo cáo', roles: ['owner'], active: r => r.name === 'reports' },
+  { href: '#/history', group: 'Vận hành', label: 'Lịch sử phiên', roles: ['owner', 'staff'], active: r => r.name === 'history' },
+  { href: '#/audit', group: 'Hệ thống', label: 'Nhật ký', roles: ['platform_admin'], active: r => r.name === 'audit' },
+  { href: '#/design', group: 'Công cụ', label: 'Giao diện mẫu', devOnly: true, active: r => r.name === 'design' },
+];
+
+export const ROLE_LABEL: Record<Role, string> = {
+  platform_admin: 'Quản trị hệ thống', owner: 'Chủ quán', staff: 'Nhân viên', customer: 'Khách',
+};
+
+/** Gom mục theo nhóm (giữ thứ tự xuất hiện); mục không có group đứng riêng ở đầu/cuối như trước. */
+function buildSections(items: NavItem[]): Array<{ group: string | null; items: NavItem[] }> {
+  const sections: Array<{ group: string | null; items: NavItem[] }> = [];
+  for (const item of items) {
+    const group = item.group ?? null;
+    const existing = group ? sections.find(s => s.group === group) : undefined;
+    if (existing) existing.items.push(item);
+    else sections.push({ group, items: [item] });
+  }
+  return sections;
+}
+
+function NavGroup({ name, items, route }: { name: string; items: NavItem[]; route: Route }) {
+  const hasActive = items.some(i => i.active(route));
+  const [open, setOpen] = useState(hasActive);
+  const expanded = open || hasActive; // nhóm chứa trang đang xem luôn mở
+  return (
+    <div className="nav-group" data-open={expanded}>
+      <button type="button" className="nav-group-head" aria-expanded={expanded} onClick={() => setOpen(!open)}>
+        <span>{name}</span><span className="nav-caret" aria-hidden="true">▾</span>
+      </button>
+      <div className="nav-group-items">
+        {items.map(item => <a key={item.href} href={item.href} aria-current={item.active(route) ? 'page' : undefined}>{item.label}</a>)}
+      </div>
+    </div>
+  );
+}
+
+export function AppShell({ route, children }: { route: Route; children: ReactNode }) {
+  const { state, logout } = useAuth();
+  const user = state.status === 'ready' ? state.user : null;
+  const items = NAV.filter(item => (!item.devOnly || import.meta.env.DEV) && (!item.roles || (user && item.roles.includes(user.role))));
+  return (
+    <div className="shell">
+      <aside className="sidebar">
+        <div className="brand"><BrandBall />SmartBilliard</div>
+        <nav className="nav" aria-label="Điều hướng chính">
+          {buildSections(items).map(section => section.group
+            ? <NavGroup key={section.group} name={section.group} items={section.items} route={route} />
+            : section.items.map(item => <a key={item.href} href={item.href} aria-current={item.active(route) ? 'page' : undefined}>{item.label}</a>))}
+        </nav>
+        <div className="sidebar-foot">
+          {user && (
+            <div className="hide-sm">
+              <strong style={{ color: '#fff' }}>{user.display_name}</strong>
+              <div>{ROLE_LABEL[user.role]}{user.venue ? ` · ${user.venue.name}` : ''}</div>
+            </div>
+          )}
+          <ThemeToggle />
+          <Button variant="ghost" size="sm" onClick={() => void logout()}>Đăng xuất</Button>
+        </div>
+      </aside>
+      <main className="main">{children}</main>
+    </div>
+  );
+}
