@@ -8,7 +8,10 @@ import { AdminOverviewPage } from './pages/admin/AdminOverviewPage';
 import { AdminVenueDetailPage } from './pages/admin/AdminVenueDetailPage';
 import { AdminVenuesPage } from './pages/admin/AdminVenuesPage';
 import { ChangePasswordPage } from './pages/ChangePasswordPage';
-import { DashboardPage } from './pages/DashboardPage';
+import { CustomerHomePage } from './pages/CustomerHomePage';
+import { HistoryPage } from './pages/shop/HistoryPage';
+import { ShopDashboardPage } from './pages/shop/ShopDashboardPage';
+import { TablesManagePage } from './pages/shop/TablesManagePage';
 import { DesignPage } from './pages/DesignPage';
 import { LoginPage } from './pages/LoginPage';
 import { Skeleton, ToastProvider } from './ui/components';
@@ -22,7 +25,10 @@ function Page({ route, user }: { route: Route; user: AuthUser }) {
     if (route.name === 'audit') return <AdminAuditPage />;
     return <AdminOverviewPage />;
   }
-  return <DashboardPage />;
+  if (user.role === 'customer') return <CustomerHomePage />;
+  if (route.name === 'history') return <HistoryPage />;
+  if (route.name === 'tables' && user.role === 'owner') return <TablesManagePage />;
+  return <ShopDashboardPage />;
 }
 
 function Router() {

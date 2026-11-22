@@ -178,10 +178,14 @@ export function TableCard({ name, state, clock, amount, rate, actions }:
     <article className="table-card" data-state={state} aria-label={`${name}: ${label.text}`}>
       <header><h3>{name}</h3><Badge tone={label.tone}>{label.text}</Badge></header>
       <FeltTable state={state} title={`Mặt ${name.toLowerCase()}`} />
-      {state === 'playing' && clock && (
+      {state === 'playing' && clock ? (
         <div className="meta">
           <span className="num clock" aria-label="Thời gian đã chơi">{clock}</span>
           <span className="num" style={{ fontSize: 'var(--text-xl)', color: 'var(--ink)' }}>{amount}</span>
+        </div>
+      ) : (
+        <div className="meta" aria-hidden="true">
+          <span className="num clock" style={{ color: 'var(--ink-faint)' }}>--:--:--</span>
         </div>
       )}
       <div className="meta"><span>Giá giờ</span><span className="num">{rate}</span></div>

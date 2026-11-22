@@ -60,7 +60,8 @@ describe('authentication flow', () => {
     const calls = mockApi({
       'GET /api/auth/me': () => json({ detail: 'x' }, 401),
       'POST /api/auth/login': () => json(owner),
-      'GET /api/health': () => json(health),
+      'GET /api/venues/1/tables': () => json({ server_time: 't', tables: [] }),
+      'GET /api/venues/1/revenue/today': () => json({ date: 'd', total_vnd: 0, session_count: 0, by_table: [] }),
       'POST /api/auth/logout': () => json({ ok: true }),
     });
     render(<App />);
@@ -70,7 +71,7 @@ describe('authentication flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Đăng nhập' }));
     expect(await screen.findByText('Chủ quán A')).toBeTruthy();
     expect(screen.getByText(/Chủ quán · Quán A/)).toBeTruthy();
-    expect(await screen.findByText('Máy chủ sẵn sàng')).toBeTruthy();
+    expect(await screen.findByText('Quán chưa có bàn nào')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Đăng xuất' }));
     expect(await screen.findByRole('button', { name: 'Đăng nhập' })).toBeTruthy();
@@ -96,14 +97,22 @@ describe('authentication flow', () => {
 });
 
 describe('dashboard', () => {
-  it('shows the empty state and an error badge if the API stops answering', async () => {
+  it('shows the empty state for an owner without tables and an error if the tables cannot load', async () => {
     mockApi({
       'GET /api/auth/me': () => json(owner),
-      'GET /api/health': () => json({ status: 'ok', app: 'demo', time: 't' }),
+      'GET /api/venues/1/tables': () => json({ server_time: 't', tables: [] }),
+      'GET /api/venues/1/revenue/today': () => json({ date: 'd', total_vnd: 0, session_count: 0, by_table: [] }),
     });
     render(<App />);
     expect(await screen.findByText('Quán chưa có bàn nào')).toBeTruthy();
-    expect(await screen.findByText(/nhầm máy chủ/)).toBeTruthy();
+    cleanup();
+    mockApi({
+      'GET /api/auth/me': () => json(owner),
+      'GET /api/venues/1/tables': () => json({ detail: 'Máy chủ bận.' }, 500),
+      'GET /api/venues/1/revenue/today': () => json({ detail: 'x' }, 500),
+    });
+    render(<App />);
+    expect(await screen.findByText('Máy chủ bận.')).toBeTruthy();
   });
 });
 

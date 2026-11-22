@@ -46,7 +46,7 @@ describe('navigation by role', () => {
     expect(screen.getByRole('link', { name: 'Nhật ký' })).toBeTruthy();
     expect(await screen.findByText('Quán đang hoạt động')).toBeTruthy();
     cleanup();
-    mock([['GET /api/auth/me', () => json(owner)], ['GET /api/health', () => json({ status: 'ok', app: 'manage', time: 't' })]]);
+    mock([['GET /api/auth/me', () => json(owner)], ['GET /api/venues/1/tables', () => json({ server_time: 't', tables: [] })], ['GET /api/venues/1/revenue/today', () => json({ date: 'd', total_vnd: 0, session_count: 0, by_table: [] })]]);
     render(<App />);
     await screen.findByText('Chủ A');
     expect(screen.queryByRole('link', { name: 'Quán' })).toBeNull();

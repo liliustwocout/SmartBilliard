@@ -6,7 +6,7 @@ import { BrandBall } from '../ui/FeltTable';
 import { ThemeToggle } from '../ui/ThemeToggle';
 
 export type Route =
-  | { name: 'home' } | { name: 'venues' } | { name: 'venue'; id: number } | { name: 'audit' } | { name: 'design' };
+  | { name: 'home' } | { name: 'venues' } | { name: 'venue'; id: number } | { name: 'audit' } | { name: 'tables' } | { name: 'history' } | { name: 'design' };
 
 export function parseRoute(hash: string, dev = import.meta.env.DEV): Route {
   const path = hash.replace(/^#/, '');
@@ -14,6 +14,8 @@ export function parseRoute(hash: string, dev = import.meta.env.DEV): Route {
   const venue = /^\/venues\/(\d+)$/.exec(path);
   if (venue) return { name: 'venue', id: Number(venue[1]) };
   if (path === '/audit') return { name: 'audit' };
+  if (path === '/tables') return { name: 'tables' };
+  if (path === '/history') return { name: 'history' };
   if (dev && path === '/design') return { name: 'design' };
   return { name: 'home' };
 }
@@ -23,6 +25,8 @@ interface NavItem { href: string; label: string; active: (route: Route) => boole
 const NAV: NavItem[] = [
   { href: '#/', label: 'Tổng quan', active: r => r.name === 'home' },
   { href: '#/venues', label: 'Quán', roles: ['platform_admin'], active: r => r.name === 'venues' || r.name === 'venue' },
+  { href: '#/tables', label: 'Bàn và giá', roles: ['owner'], active: r => r.name === 'tables' },
+  { href: '#/history', label: 'Lịch sử phiên', roles: ['owner', 'staff'], active: r => r.name === 'history' },
   { href: '#/audit', label: 'Nhật ký', roles: ['platform_admin'], active: r => r.name === 'audit' },
   { href: '#/design', label: 'Giao diện mẫu', devOnly: true, active: r => r.name === 'design' },
 ];

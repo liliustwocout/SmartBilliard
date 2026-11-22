@@ -112,6 +112,14 @@ def build_auth(get_db: Callable, now_fn: Callable[[], datetime], cookie_secure: 
             raise HTTPException(404, "Không tìm thấy quán.")
         return principal
 
+    def require_venue_roles(*roles: str) -> Callable:
+        """Vai trò trong ĐÚNG quán của URL. Quản trị nền tảng không vận hành quán nên không nằm trong các vai trò này."""
+        def dependency(venue_id: int, principal: Annotated[Principal, Depends(require_roles(*roles))]) -> Principal:
+            if principal.user.venue_id != venue_id:
+                raise HTTPException(404, "Không tìm thấy quán.")
+            return principal
+        return dependency
+
     @router.post("/login")
     def login(body: LoginBody, request: Request, response: Response, db: Annotated[Session, Depends(get_db)]):
         throttle(request)
@@ -195,4 +203,4 @@ def build_auth(get_db: Callable, now_fn: Callable[[], datetime], cookie_secure: 
         db.commit()
         return {"ok": True}
 
-    return router, current_principal, require_roles, venue_scope
+    return router, current_principal, require_roles, venue_scope, require_venue_roles

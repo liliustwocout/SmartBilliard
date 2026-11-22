@@ -48,3 +48,16 @@ export interface AuditRow {
 }
 export interface Overview { venues: { active: number; suspended: number }; users: { owner: number; staff: number; customer: number } }
 export interface CreatedVenue { venue: VenueSummary; owner_temp_password: string }
+
+export type TableType = 'pool' | 'carom' | 'snooker' | 'other';
+export interface SessionView {
+  id: string; table_id: number; table_name: string | null; status: 'ACTIVE' | 'PAID' | 'VOID';
+  started_at: string; ended_at: string | null; rate_snapshot: number; customer_id: number | null; void_reason: string | null;
+  elapsed_seconds: number; billable_minutes: number; amount_vnd: number;
+}
+export interface TableRow {
+  id: number; name: string; table_type: TableType; hourly_rate: number; status: 'ACTIVE' | 'INACTIVE'; session: SessionView | null;
+}
+export interface TablesResponse { server_time: string; tables: TableRow[] }
+export interface Revenue { date: string; total_vnd: number; session_count: number; by_table: Array<{ table_id: number; table_name: string | null; sessions: number; amount_vnd: number }> }
+export type PaymentMethod = 'cash' | 'transfer';
