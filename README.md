@@ -101,6 +101,15 @@ Mặc định ưu tiên bàn có cạnh dài gần phương ngang trong ảnh đ
 
 PERSON_AND_CUE luôn yêu cầu kiểm tra thủ công ở Phase 2 kể cả có confidence gậy từ mô phỏng. COCO person detector không phải cue detector. MINI_TABLE không chứng minh khả năng phát hiện người thật.
 
+## Phòng quản lý (sản phẩm thật, tách biệt với phòng demo)
+
+Đang xây dựng theo [kế hoạch](docs/planning/MANAGEMENT_ROOM_PLAN.md). Mốc M0 mới có khung: `apps/manage_api` (cổng 8100, DB `data/manage.db`) và `apps/manage_web` (cổng 5174). Chưa có đăng nhập, bàn, phiên hay gamification. Không dùng chung code, database hay cấu hình với `apps/api`/`apps/web`.
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn apps.manage_api.main:create_app --factory --host 127.0.0.1 --port 8100 --env-file .env
+cd apps\manage_web; npm run dev
+```
+
 ## Giới hạn và an toàn dữ liệu
 
 Chưa có login, phân quyền, audit nhân viên hoặc gateway thanh toán. Chỉ bind loopback trên laptop demo, không triển khai mạng công cộng. POST và WebSocket kiểm tra browser Origin; Host chỉ chấp nhận localhost/127.0.0.1. Không có secrets mặc định. Lịch sử là hóa đơn **demo**, không xác nhận tiền đã chuyển ngoài đời. Video do người dùng tải lên trong nhánh thử nghiệm được lưu cục bộ dưới thư mục `recordings` cạnh database; không được dùng làm bằng chứng model đã đạt yêu cầu nếu thiếu nhãn và phép đo.

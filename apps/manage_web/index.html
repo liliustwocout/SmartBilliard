@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#e9f0ef" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="description" content="SmartBilliard — hệ thống quản lý quán bi-a." />
+    <title>SmartBilliard · Quản lý quán</title>
+    <script>
+      // Đặt theme trước khi vẽ để không bị nháy sáng/tối.
+      (function () {
+        var t = null;
+        try { t = localStorage.getItem('manage-theme'); } catch (e) {}
+        if (t !== 'light' && t !== 'dark') {
+          t = 'light';
+        }
+        document.documentElement.dataset.theme = t;
+      })();
+    </script>
+  </head>
+  <body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body>
+</html>

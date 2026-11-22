@@ -23,6 +23,8 @@ Tập dùng được là 84 clip; chia `--test-camera cam1 --val-video cam2_03.m
 - **CP2** — Tạo pack chốt cho 9 clip REVIEW (`data/label_packs/batch-20261120-003502/pack_member-chot`). Người phụ trách chốt xong, gộp lại: 9 clip thành MAJORITY, REVIEW còn 0.
 - **CP3** — Thêm `services/labeling/dataset.py` + `scripts/export_skeleton_dataset.py`: xuất `skeleton_dataset.npz` (24 khung × 17 điểm × x/y/conf), chia theo camera/video.
 - **CP4** — Thêm cân bằng lớp tạm (`--balance`): augment lớp ít chỉ trên train + class_weights; có test hồi quy. Chưa huấn luyện nên chưa biết hiệu quả.
+- **CP5 (phòng quản lý M0)** — Nhánh `feat/manage-m0`: khung `apps/manage_api` (config MANAGE_*, DB riêng, /api/health, host/origin check) + `apps/manage_web` (cổng 5174), thêm vào CI. Kế hoạch: `docs/planning/MANAGEMENT_ROOM_PLAN.md`. Chưa có auth/dữ liệu nghiệp vụ (M1).
+- **CP6 (phòng quản lý M0.5)** — Design system "Nỉ bàn" trong `apps/manage_web`: tokens sáng/tối (mặc định sáng, không dùng shadow), font Barlow Condensed + Be Vietnam Pro (tự host), bộ component (Button, Field, Badge, Card, Skeleton, EmptyState, ErrorState, Tabs, DataTable, Modal, ConfirmDialog, Toast, TableCard, FeltTable), trang đăng nhập / tổng quan rỗng / `#/design`. 10 test, build đạt, đã xem ảnh desktop sáng-tối và mobile 375px (không cuộn ngang). Chưa thử iOS Safari/Android thật; chưa có biểu đồ/DateRange (M6).
 
 ## Phần chưa kiểm chứng / giới hạn
 
