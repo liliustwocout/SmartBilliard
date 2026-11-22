@@ -6,10 +6,12 @@ from typing import Annotated, Callable
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from apps.manage_api.models import AuditLog, AuthSession, User, Venue
 from apps.manage_api.security import DUMMY_HASH, hash_password, new_token, password_problem, token_digest, verify_password
+from apps.manage_api.textutil import PHONE_RE, normalize_phone
 
 COOKIE = "sb_manage_session"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -37,6 +39,13 @@ class LoginBody(BaseModel):
     login: str = Field(min_length=1, max_length=120)
     password: str = Field(min_length=1, max_length=200)
     venue_slug: str | None = Field(default=None, max_length=60)
+
+
+class RegisterBody(BaseModel):
+    venue_slug: str = Field(min_length=1, max_length=60)
+    display_name: str = Field(min_length=1, max_length=120)
+    phone: str = Field(min_length=1, max_length=20)
+    password: str = Field(min_length=1, max_length=200)
 
 
 class ChangePasswordBody(BaseModel):
@@ -112,6 +121,15 @@ def build_auth(get_db: Callable, now_fn: Callable[[], datetime], cookie_secure: 
             raise HTTPException(404, "Không tìm thấy quán.")
         return principal
 
+    def issue_session(db: Session, user: User, venue: Venue | None, response: Response, naive_now: datetime):
+        token, csrf = new_token(), new_token()
+        db.add(AuthSession(token_hash=token_digest(token), csrf_token=csrf, user_id=user.id, created_at=naive_now,
+                           last_seen_at=naive_now, expires_at=naive_now + timedelta(hours=SESSION_HOURS)))
+        db.commit()
+        response.set_cookie(COOKIE, token, max_age=SESSION_HOURS * 3600, httponly=True, samesite="lax",
+                            secure=cookie_secure, path="/")
+        return public_user(user, venue, csrf)
+
     def require_venue_roles(*roles: str) -> Callable:
         """Vai trò trong ĐÚNG quán của URL. Quản trị nền tảng không vận hành quán nên không nằm trong các vai trò này."""
         def dependency(venue_id: int, principal: Annotated[Principal, Depends(require_roles(*roles))]) -> Principal:
@@ -161,14 +179,35 @@ def build_auth(get_db: Callable, now_fn: Callable[[], datetime], cookie_secure: 
 
         user.failed_attempts = 0
         user.locked_until = None
-        token, csrf = new_token(), new_token()
-        db.add(AuthSession(token_hash=token_digest(token), csrf_token=csrf, user_id=user.id, created_at=naive_now,
-                           last_seen_at=naive_now, expires_at=naive_now + timedelta(hours=SESSION_HOURS)))
         audit(db, now, "login_ok", actor=user)
-        db.commit()
-        response.set_cookie(COOKIE, token, max_age=SESSION_HOURS * 3600, httponly=True, samesite="lax",
-                            secure=cookie_secure, path="/")
-        return public_user(user, user_venue, csrf)
+        return issue_session(db, user, user_venue, response, naive_now)
+
+    @router.post("/register", status_code=201)
+    def register(body: RegisterBody, request: Request, response: Response, db: Annotated[Session, Depends(get_db)]):
+        """Khách tự đăng ký tài khoản ở MỘT quán (theo địa chỉ quán). Mỗi quán có tài khoản riêng."""
+        throttle(request)
+        now = now_fn()
+        venue = db.scalar(select(Venue).where(Venue.slug == body.venue_slug.strip().lower()))
+        if venue is None or venue.status != "ACTIVE":
+            raise HTTPException(404, "Không tìm thấy quán.")
+        phone = normalize_phone(body.phone)
+        if not PHONE_RE.fullmatch(phone):
+            raise HTTPException(400, "Số điện thoại cần đủ 10 chữ số, bắt đầu bằng 0.")
+        problem = password_problem(body.password)
+        if problem:
+            raise HTTPException(400, problem)
+        if db.scalar(select(User.id).where(User.venue_id == venue.id, User.role == "customer", User.login == phone)):
+            raise HTTPException(409, "Số điện thoại này đã có tài khoản ở quán. Hãy đăng nhập.")
+        user = User(role="customer", login=phone, display_name=body.display_name.strip(), password_hash=hash_password(body.password),
+                    venue_id=venue.id, created_at=utc_naive(now))
+        db.add(user)
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(409, "Số điện thoại này đã có tài khoản ở quán. Hãy đăng nhập.")
+        audit(db, now, "customer_registered", actor=user, venue_id=venue.id, target=phone)
+        return issue_session(db, user, venue, response, utc_naive(now))
 
     @router.get("/me")
     def me(principal: Annotated[Principal, Depends(current_principal)]):

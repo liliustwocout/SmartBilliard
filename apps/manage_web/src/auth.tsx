@@ -8,6 +8,7 @@ type AuthState = { status: 'loading' } | { status: 'anonymous'; offline?: string
 interface AuthApi {
   state: AuthState;
   login: (login: string, password: string, venueSlug?: string) => Promise<void>;
+  register: (venueSlug: string, displayName: string, phone: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   changePassword: (current: string, next: string) => Promise<void>;
 }
@@ -41,6 +42,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     state,
     login: async (login, password, venueSlug) => {
       accept(await api<AuthUser>('/auth/login', { body: { login, password, venue_slug: venueSlug || null } }));
+    },
+    register: async (venueSlug, displayName, phone, password) => {
+      accept(await api<AuthUser>('/auth/register', { body: { venue_slug: venueSlug, display_name: displayName, phone, password } }));
     },
     logout: async () => {
       try { await api('/auth/logout', { method: 'POST', body: {} }); } finally { setCsrfToken(''); setState({ status: 'anonymous' }); }

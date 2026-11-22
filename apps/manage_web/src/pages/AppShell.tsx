@@ -6,7 +6,8 @@ import { BrandBall } from '../ui/FeltTable';
 import { ThemeToggle } from '../ui/ThemeToggle';
 
 export type Route =
-  | { name: 'home' } | { name: 'venues' } | { name: 'venue'; id: number } | { name: 'audit' } | { name: 'tables' } | { name: 'history' } | { name: 'staff' } | { name: 'menu' } | { name: 'customers' } | { name: 'design' };
+  | { name: 'home' } | { name: 'venues' } | { name: 'venue'; id: number } | { name: 'audit' } | { name: 'tables' } | { name: 'history' } | { name: 'staff' } | { name: 'menu' } | { name: 'customers' } | { name: 'bookings' } | { name: 'my-bookings' } | { name: 'my-history' }
+  | { name: 'customer-entry'; slug: string } | { name: 'design' };
 
 export function parseRoute(hash: string, dev = import.meta.env.DEV): Route {
   const path = hash.replace(/^#/, '');
@@ -16,6 +17,11 @@ export function parseRoute(hash: string, dev = import.meta.env.DEV): Route {
   if (path === '/audit') return { name: 'audit' };
   if (path === '/tables') return { name: 'tables' };
   if (path === '/history') return { name: 'history' };
+  if (path === '/bookings') return { name: 'bookings' };
+  if (path === '/my/bookings') return { name: 'my-bookings' };
+  if (path === '/my/history') return { name: 'my-history' };
+  const entry = /^\/c\/([a-z0-9]+(?:-[a-z0-9]+)*)$/.exec(path);
+  if (entry) return { name: 'customer-entry', slug: entry[1] };
   if (path === '/staff') return { name: 'staff' };
   if (path === '/menu') return { name: 'menu' };
   if (path === '/customers') return { name: 'customers' };
@@ -29,6 +35,7 @@ const NAV: NavItem[] = [
   { href: '#/', label: 'Tổng quan', active: r => r.name === 'home' },
   { href: '#/venues', label: 'Quán', roles: ['platform_admin'], active: r => r.name === 'venues' || r.name === 'venue' },
   { href: '#/tables', label: 'Bàn và giá', roles: ['owner'], active: r => r.name === 'tables' },
+  { href: '#/bookings', label: 'Đặt bàn', roles: ['owner', 'staff'], active: r => r.name === 'bookings' },
   { href: '#/customers', label: 'Khách hàng', roles: ['owner', 'staff'], active: r => r.name === 'customers' },
   { href: '#/menu', label: 'Menu dịch vụ', roles: ['owner'], active: r => r.name === 'menu' },
   { href: '#/staff', label: 'Nhân viên', roles: ['owner'], active: r => r.name === 'staff' },

@@ -20,7 +20,7 @@ const staff: AuthUser = { ...owner, id: 3, role: 'staff', login: 's', display_na
 
 const session: SessionView = {
   id: 'sess-1', table_id: 2, table_name: 'Bàn 2', status: 'ACTIVE', started_at: '2026-11-22T03:00:00Z', ended_at: null,
-  rate_snapshot: 60000, customer_id: null, void_reason: null, elapsed_seconds: 3725, billable_minutes: 63, amount_vnd: 63000, table_amount: 63000, items_amount: 0, items: [],
+  rate_snapshot: 60000, customer_id: null, void_reason: null, elapsed_seconds: 3725, billable_minutes: 63, amount_vnd: 63000, table_amount: 63000, items_amount: 0, items: [], deposit_applied: 0, amount_due: 63000,
 };
 const freeTable: TableRow = { id: 1, name: 'Bàn 1', table_type: 'pool', hourly_rate: 60000, status: 'ACTIVE', session: null };
 const playingTable: TableRow = { id: 2, name: 'Bàn 2', table_type: 'pool', hourly_rate: 60000, status: 'ACTIVE', session };
@@ -90,7 +90,7 @@ describe('table dashboard', () => {
   });
 
   it('checkout shows the server quote and sends only the payment method', async () => {
-    const paid = { ...session, status: 'PAID', amount_vnd: 64000, duplicate: false };
+    const paid = { ...session, status: 'PAID', amount_vnd: 64000, amount_due: 64000, duplicate: false };
     const calls = mock(staff, [
       ['GET /api/venues/1/sessions/sess-1/quote', () => json(session)],
       ['POST /api/venues/1/sessions/sess-1/checkout', () => json(paid)],

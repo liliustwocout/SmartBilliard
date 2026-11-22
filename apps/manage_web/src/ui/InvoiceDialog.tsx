@@ -26,6 +26,10 @@ function InvoiceBody({ venueId, sessionId }: { venueId: number; sessionId: strin
             <tr key={item.id}><td>{item.name} × {item.quantity}</td><td className="right num">{money(item.amount)}</td></tr>
           ))}
           <tr><td><strong>Tổng cộng</strong></td><td className="right num" data-testid="invoice-total" style={{ fontSize: 'var(--text-xl)' }}>{money(data.total)}</td></tr>
+          {data.deposit_applied > 0 && <>
+            <tr><td>Đã cọc (mô phỏng)</td><td className="right num">− {money(data.deposit_applied)}</td></tr>
+            <tr><td><strong>Còn phải thu</strong></td><td className="right num" data-testid="invoice-due" style={{ fontSize: 'var(--text-xl)' }}>{money(data.amount_due)}</td></tr>
+          </>}
         </tbody>
       </table>
       <p className="muted">Thanh toán: {data.payment_method ? METHOD[data.payment_method] : '—'}{data.cashier ? ` · Thu ngân: ${data.cashier}` : ''}</p>

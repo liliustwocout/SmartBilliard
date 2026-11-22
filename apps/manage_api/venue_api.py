@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from apps.manage_api.auth import Principal, audit, utc_naive
 from apps.manage_api.billing import quote
-from apps.manage_api.models import BilliardTable, Payment, PlaySession, SessionItem, User
+from apps.manage_api.models import BilliardTable, Deposit, Payment, PlaySession, SessionItem, User
 
 TableType = Literal["pool", "carom", "snooker", "other"]
 MAX_RATE = 10_000_000
@@ -88,8 +88,13 @@ def build_venue_api(get_db: Callable, require_venue_roles: Callable, now_fn: Cal
         return [{"id": i.id, "product_id": i.product_id, "name": i.name_snapshot, "unit_price": i.unit_price,
                  "quantity": i.quantity, "amount": i.unit_price * i.quantity} for i in rows]
 
+    def paid_deposit(db: Session, session: PlaySession) -> int:
+        if not session.booking_id:
+            return 0
+        return db.scalar(select(Deposit.amount).where(Deposit.booking_id == session.booking_id, Deposit.status == "PAID")) or 0
+
     def session_view(session: PlaySession, table_name: str | None, now: datetime, items_amount: int = 0,
-                     items: list[dict] | None = None) -> dict:
+                     items: list[dict] | None = None, deposit: int = 0) -> dict:
         end = session.ended_at or utc_naive(now)
         live = quote(session.started_at, end, session.rate_snapshot)
         table_amount = session.table_amount if session.table_amount is not None else live["amount_vnd"]
@@ -105,6 +110,9 @@ def build_venue_api(get_db: Callable, require_venue_roles: Callable, now_fn: Cal
         }
         if items is not None:
             view["items"] = items
+        gross = view["amount_vnd"]
+        view["deposit_applied"] = session.deposit_applied if session.deposit_applied is not None else min(deposit, gross)
+        view["amount_due"] = gross - view["deposit_applied"]
         return view
 
     def table_view(table: BilliardTable, session: PlaySession | None, now: datetime, items_amount: int = 0) -> dict:
@@ -193,7 +201,7 @@ def build_venue_api(get_db: Callable, require_venue_roles: Callable, now_fn: Cal
     def session_quote(venue_id: int, session_id: str, _: Operator, db: Db):
         session = session_or_404(db, venue_id, session_id)
         return session_view(session, db.get(BilliardTable, session.table_id).name, now_fn(),
-                            items_sum(db, [session.id]).get(session.id, 0), item_lines(db, session.id))
+                            items_sum(db, [session.id]).get(session.id, 0), item_lines(db, session.id), paid_deposit(db, session))
 
     @router.post("/sessions/{session_id}/checkout")
     def checkout(venue_id: int, session_id: str, body: CheckoutBody, principal: Operator, db: Db):
@@ -216,13 +224,18 @@ def build_venue_api(get_db: Callable, require_venue_roles: Callable, now_fn: Cal
         # Bước 2: tính tiền món trong cùng giao dịch rồi chốt các con số.
         items_total = items_sum(db, [session.id]).get(session.id, 0)
         total = result["amount_vnd"] + items_total
+        # Tiền cọc (giả lập) đã trả trước được trừ vào hoá đơn; phần cọc thừa được hoàn.
+        deposit = db.scalar(select(Deposit).where(Deposit.booking_id == session.booking_id, Deposit.status == "PAID")) if session.booking_id else None
+        applied = min(deposit.amount, total) if deposit else 0
+        if deposit:
+            deposit.status, deposit.applied_amount, deposit.refunded_amount, deposit.settled_at = "APPLIED", applied, deposit.amount - applied, end
         db.execute(update(PlaySession).where(PlaySession.id == session.id).values(
             total_amount=total, table_amount=result["amount_vnd"], items_amount=items_total,
-            billable_minutes=result["billable_minutes"]))
-        db.add(Payment(session_id=session.id, venue_id=venue_id, method=body.payment_method, amount=total,
+            billable_minutes=result["billable_minutes"], deposit_applied=applied))
+        db.add(Payment(session_id=session.id, venue_id=venue_id, method=body.payment_method, amount=total - applied,
                        created_by=principal.user.id, created_at=end))
         audit(db, now, "session_paid", actor=principal.user, venue_id=venue_id, target=table_name,
-              detail={"session_id": session.id, "amount": total, "table_amount": result["amount_vnd"],
+              detail={"session_id": session.id, "amount": total, "deposit_applied": applied, "table_amount": result["amount_vnd"],
                       "items_amount": items_total, "method": body.payment_method})
         db.commit()
         db.refresh(session)

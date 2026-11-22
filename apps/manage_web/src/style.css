@@ -198,6 +198,28 @@ dialog.modal::backdrop { background: var(--overlay); }
   dialog.modal .modal-actions, dialog.modal h2, .toasts { display: none; }
 }
 
+/* ---- Khu khách (ưu tiên điện thoại) ---- */
+.customer-auth { display: grid; gap: var(--space-5); align-content: start; width: min(100%, 440px); margin: 0 auto; padding: var(--space-5) var(--space-4) var(--space-7); min-height: 100dvh; }
+.customer-hero { display: grid; gap: var(--space-4); }
+.customer-hero h1 { font-size: var(--text-2xl); }
+.customer-shell { min-height: 100dvh; display: grid; grid-template-rows: auto 1fr auto; }
+.customer-top { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); background: var(--cloth-deep); color: #e8f2f0; border-bottom: 4px solid var(--wood); }
+.customer-top .btn-ghost { color: #c9e0dd; }
+.customer-main { width: min(100%, 720px); margin: 0 auto; padding: var(--space-5) var(--space-4) 140px; display: grid; gap: var(--space-4); align-content: start; }
+.customer-nav { position: fixed; inset: auto 0 0 0; display: grid; grid-template-columns: repeat(3, 1fr); background: var(--surface); border-top: 2px solid var(--line-strong); z-index: 20; }
+.customer-nav a { display: grid; place-items: center; min-height: 56px; color: var(--ink-soft); text-decoration: none; font-weight: 500; }
+.customer-nav a[aria-current="page"] { color: var(--ink); background: var(--primary); }
+.chips { display: flex; gap: var(--space-2); overflow-x: auto; padding-bottom: 2px; }
+.chip { display: grid; gap: 2px; justify-items: start; min-width: 140px; padding: var(--space-3) var(--space-4); background: var(--surface); border: 2px solid var(--line); border-radius: var(--radius-md); text-align: left; }
+.chip[aria-checked="true"] { border-color: var(--brand); background: var(--surface-2); }
+.slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: var(--space-2); }
+.slot { min-height: 44px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); font-family: var(--font-display); font-size: var(--text-lg); font-weight: 600; font-variant-numeric: tabular-nums; }
+.slot[aria-checked="true"] { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+.slot:disabled { background: var(--surface-3); color: var(--ink-faint); text-decoration: line-through; }
+.booking-bar { position: fixed; inset: auto 0 56px 0; z-index: 19; display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); background: var(--surface-2); border-top: 1px solid var(--line-strong); }
+.booking-card { display: grid; gap: var(--space-2); }
+body:has(.customer-nav) .toasts { bottom: 76px; }
+
 /* ---- Login ---- */
 .login { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(360px, .85fr); min-height: 100dvh; }
 .login-art { position: relative; display: grid; align-content: center; gap: var(--space-6); padding: var(--space-6);

@@ -111,6 +111,8 @@ class PlaySession(Base):
     opened_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     closed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     void_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    booking_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    deposit_applied: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class Payment(Base):
@@ -155,3 +157,61 @@ class SessionItem(Base):
     quantity: Mapped[int] = mapped_column(Integer)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class VenueBookingSettings(Base):
+    """Luật đặt bàn của từng quán (chủ quán chỉnh)."""
+    __tablename__ = "venue_booking_settings"
+    __table_args__ = (
+        CheckConstraint("deposit_amount >= 0 AND deposit_amount <= 1000000"),
+        CheckConstraint("hold_minutes >= 5 AND hold_minutes <= 120"),
+        CheckConstraint("refund_before_minutes >= 0 AND refund_before_minutes <= 2880"),
+        CheckConstraint("noshow_grace_minutes >= 5 AND noshow_grace_minutes <= 240"),
+    )
+    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"), primary_key=True)
+    deposit_amount: Mapped[int] = mapped_column(Integer, default=50000)
+    hold_minutes: Mapped[int] = mapped_column(Integer, default=15)
+    refund_before_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    noshow_grace_minutes: Mapped[int] = mapped_column(Integer, default=30)
+
+
+class Booking(Base):
+    __tablename__ = "bookings"
+    __table_args__ = (
+        CheckConstraint("status IN ('PENDING', 'CONFIRMED', 'CHECKED_IN', 'CANCELLED', 'EXPIRED', 'NO_SHOW')"),
+        CheckConstraint("end_at > start_at"),
+        Index("ix_bookings_table_start", "table_id", "start_at"),
+        Index("ix_bookings_venue_start", "venue_id", "start_at"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"))
+    table_id: Mapped[int] = mapped_column(ForeignKey("billiard_tables.id"))
+    customer_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    start_at: Mapped[datetime] = mapped_column(DateTime)
+    end_at: Mapped[datetime] = mapped_column(DateTime)
+    status: Mapped[str] = mapped_column(String(12), default="PENDING")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class Deposit(Base):
+    """Tiền cọc đặt bàn. Hiện chỉ có nhà cung cấp 'mock' (giả lập, không thu tiền thật)."""
+    __tablename__ = "deposits"
+    __table_args__ = (
+        CheckConstraint("status IN ('PENDING', 'PAID', 'APPLIED', 'REFUNDED', 'FORFEITED', 'CANCELLED')"),
+        CheckConstraint("amount > 0 AND applied_amount >= 0 AND refunded_amount >= 0"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    booking_id: Mapped[str] = mapped_column(ForeignKey("bookings.id"), unique=True)
+    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"), index=True)
+    amount: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(12), default="PENDING")
+    provider: Mapped[str] = mapped_column(String(20))
+    provider_ref: Mapped[str] = mapped_column(String(60))
+    applied_amount: Mapped[int] = mapped_column(Integer, default=0)
+    refunded_amount: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

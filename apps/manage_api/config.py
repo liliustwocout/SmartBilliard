@@ -25,6 +25,7 @@ class ManageSettings:
     cookie_secure: bool = False
     allowed_hosts: tuple[str, ...] = ("127.0.0.1", "localhost")
     extra_origins: tuple[str, ...] = field(default_factory=tuple)
+    payment_provider: str = "mock"
 
     def __post_init__(self):
         if not self.database_url.startswith("sqlite:"):
@@ -33,6 +34,8 @@ class ManageSettings:
             raise ValueError("MANAGE_DATABASE_URL không được trỏ tới cơ sở dữ liệu của phòng demo")
         if not (1 <= self.api_port <= 65535 and 1 <= self.web_port <= 65535):
             raise ValueError("Cổng không hợp lệ")
+        if self.payment_provider != "mock":
+            raise ValueError("MANAGE_PAYMENT_PROVIDER hiện chỉ hỗ trợ 'mock' (cọc giả lập, không thu tiền thật)")
         ZoneInfo(self.timezone)
 
     @property
@@ -54,4 +57,5 @@ class ManageSettings:
             cookie_secure=env_bool("MANAGE_COOKIE_SECURE", False),
             allowed_hosts=csv("MANAGE_ALLOWED_HOSTS") or cls.allowed_hosts,
             extra_origins=csv("MANAGE_EXTRA_ORIGINS"),
+            payment_provider=os.environ.get("MANAGE_PAYMENT_PROVIDER", cls.payment_provider),
         )

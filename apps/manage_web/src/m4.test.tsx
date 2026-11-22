@@ -21,7 +21,7 @@ const staff: AuthUser = { ...owner, id: 3, role: 'staff', login: 's', display_na
 const baseSession: SessionView = {
   id: 'sess-1', table_id: 2, table_name: 'Bàn 2', status: 'ACTIVE', started_at: '2026-11-22T03:00:00Z', ended_at: null,
   rate_snapshot: 60000, customer_id: null, void_reason: null, elapsed_seconds: 3600, billable_minutes: 60,
-  table_amount: 60000, items_amount: 0, amount_vnd: 60000, items: [],
+  table_amount: 60000, items_amount: 0, amount_vnd: 60000, items: [], deposit_applied: 0, amount_due: 60000,
 };
 const playing: TableRow = { id: 2, name: 'Bàn 2', table_type: 'pool', hourly_rate: 60000, status: 'ACTIVE', session: baseSession };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
@@ -48,7 +48,7 @@ const bodyOf = (calls: Array<{ key: string; init?: RequestInit }>, key: string) 
 describe('items and customer inside checkout', () => {
   it('adds a menu item, shows the server total, and removes it again', async () => {
     let items: SessionView['items'] = [];
-    const quote = () => json({ ...baseSession, items, items_amount: items!.reduce((n, i) => n + i.amount, 0), amount_vnd: 60000 + items!.reduce((n, i) => n + i.amount, 0) });
+    const quote = () => json({ ...baseSession, items, items_amount: items!.reduce((n, i) => n + i.amount, 0), amount_vnd: 60000 + items!.reduce((n, i) => n + i.amount, 0), amount_due: 60000 + items!.reduce((n, i) => n + i.amount, 0) });
     const calls = mock(staff, [
       ['GET /api/venues/1/sessions/sess-1/quote', quote],
       ['GET /api/venues/1/products', () => json([{ id: 5, name: 'Nước suối', price: 10000, status: 'ACTIVE' }, { id: 6, name: 'Món cũ', price: 1, status: 'INACTIVE' }])],
@@ -112,13 +112,13 @@ describe('items and customer inside checkout', () => {
     const invoice: Invoice = {
       venue_name: 'Quán A', invoice_no: 'ABCD1234', table_name: 'Bàn 2', started_at: '2026-11-22T03:00:00Z', ended_at: '2026-11-22T04:00:00Z',
       billable_minutes: 60, rate: 60000, table_amount: 60000, items: [{ id: 1, product_id: 5, name: 'Phấn', unit_price: 5000, quantity: 2, amount: 10000 }],
-      items_amount: 10000, total: 70000, payment_method: 'cash', cashier: 'Thu ngân', customer: null,
+      items_amount: 10000, total: 70000, deposit_applied: 0, amount_due: 70000, payment_method: 'cash', cashier: 'Thu ngân', customer: null,
     };
     mock(staff, [
       ['GET /api/venues/1/sessions/sess-1/quote', () => json(baseSession)],
       ['GET /api/venues/1/products', () => json([])],
       ['GET /api/venues/1/customers', () => json({ total: 0, items: [] })],
-      ['POST /api/venues/1/sessions/sess-1/checkout', () => json({ ...baseSession, status: 'PAID', amount_vnd: 70000 })],
+      ['POST /api/venues/1/sessions/sess-1/checkout', () => json({ ...baseSession, status: 'PAID', amount_vnd: 70000, amount_due: 70000 })],
       ['GET /api/venues/1/sessions/sess-1/invoice', () => json(invoice)],
     ]);
     render(<App />);

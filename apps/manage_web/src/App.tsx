@@ -8,7 +8,12 @@ import { AdminOverviewPage } from './pages/admin/AdminOverviewPage';
 import { AdminVenueDetailPage } from './pages/admin/AdminVenueDetailPage';
 import { AdminVenuesPage } from './pages/admin/AdminVenuesPage';
 import { ChangePasswordPage } from './pages/ChangePasswordPage';
-import { CustomerHomePage } from './pages/CustomerHomePage';
+import { BookPage } from './pages/customer/BookPage';
+import { CustomerAuthPage } from './pages/customer/CustomerAuthPage';
+import { CustomerShell } from './pages/customer/CustomerShell';
+import { MyBookingsPage } from './pages/customer/MyBookingsPage';
+import { MyHistoryPage } from './pages/customer/MyHistoryPage';
+import { BookingsPage } from './pages/shop/BookingsPage';
 import { CustomersPage } from './pages/shop/CustomersPage';
 import { MenuPage } from './pages/shop/MenuPage';
 import { StaffPage } from './pages/shop/StaffPage';
@@ -28,8 +33,8 @@ function Page({ route, user }: { route: Route; user: AuthUser }) {
     if (route.name === 'audit') return <AdminAuditPage />;
     return <AdminOverviewPage />;
   }
-  if (user.role === 'customer') return <CustomerHomePage />;
   if (route.name === 'history') return <HistoryPage />;
+  if (route.name === 'bookings') return <BookingsPage />;
   if (route.name === 'customers') return <CustomersPage />;
   if (route.name === 'tables' && user.role === 'owner') return <TablesManagePage />;
   if (route.name === 'menu' && user.role === 'owner') return <MenuPage />;
@@ -49,8 +54,18 @@ function Router() {
   if (state.status === 'loading') {
     return <div className="main" role="status" aria-label="Đang tải"><Skeleton width={220} height={32} /><Skeleton height={160} /></div>;
   }
-  if (state.status === 'anonymous') return <LoginPage offline={state.offline} />;
+  if (state.status === 'anonymous') {
+    return route.name === 'customer-entry' ? <CustomerAuthPage slug={route.slug} offline={state.offline} /> : <LoginPage offline={state.offline} />;
+  }
   if (state.user.must_change_password) return <ChangePasswordPage />;
+  if (state.user.role === 'customer') {
+    const page = route.name === 'my-bookings' ? 'bookings' : route.name === 'my-history' ? 'history' : 'book';
+    return (
+      <CustomerShell page={page}>
+        {page === 'bookings' ? <MyBookingsPage /> : page === 'history' ? <MyHistoryPage /> : <BookPage />}
+      </CustomerShell>
+    );
+  }
   return <AppShell route={route}><Page route={route} user={state.user} /></AppShell>;
 }
 

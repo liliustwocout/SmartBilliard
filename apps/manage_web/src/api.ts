@@ -54,7 +54,7 @@ export interface SessionView {
   id: string; table_id: number; table_name: string | null; status: 'ACTIVE' | 'PAID' | 'VOID';
   started_at: string; ended_at: string | null; rate_snapshot: number; customer_id: number | null; void_reason: string | null;
   elapsed_seconds: number; billable_minutes: number; amount_vnd: number;
-  table_amount: number; items_amount: number; items?: ItemLine[];
+  table_amount: number; items_amount: number; items?: ItemLine[]; deposit_applied: number; amount_due: number;
 }
 export interface ItemLine { id: number; product_id: number; name: string; unit_price: number; quantity: number; amount: number }
 export interface TableRow {
@@ -68,6 +68,21 @@ export interface StaffRow { id: number; login: string; display_name: string; sta
 export interface ProductRow { id: number; name: string; price: number; status: 'ACTIVE' | 'INACTIVE' }
 export interface Invoice {
   venue_name: string; invoice_no: string; table_name: string; started_at: string; ended_at: string; billable_minutes: number; rate: number;
-  table_amount: number; items: ItemLine[]; items_amount: number; total: number; payment_method: PaymentMethod | null;
+  table_amount: number; items: ItemLine[]; items_amount: number; total: number; deposit_applied: number; amount_due: number; payment_method: PaymentMethod | null;
   cashier: string | null; customer: string | null;
 }
+
+export type BookingStatus = 'PENDING' | 'CONFIRMED' | 'CHECKED_IN' | 'CANCELLED' | 'EXPIRED' | 'NO_SHOW';
+export type DepositStatus = 'PENDING' | 'PAID' | 'APPLIED' | 'REFUNDED' | 'FORFEITED' | 'CANCELLED';
+export interface DepositView { amount: number; status: DepositStatus; provider: string; is_mock: boolean; applied_amount: number; refunded_amount: number }
+export interface BookingView {
+  id: string; table_id: number; table_name: string | null; status: BookingStatus; start_at: string; end_at: string; expires_at: string | null;
+  session_id: string | null; created_at: string; deposit: DepositView | null; customer?: { id: number; name: string; phone: string };
+}
+export interface BookingSettings { deposit_amount: number; hold_minutes: number; refund_before_minutes: number; noshow_grace_minutes: number; payment_is_mock: boolean }
+export interface Availability {
+  server_time: string; settings: BookingSettings; durations: number[];
+  tables: Array<{ id: number; name: string; table_type: TableType; hourly_rate: number; playing_now: boolean; busy: Array<{ start_at: string; end_at: string }> }>;
+}
+export interface MySession { id: string; table_name: string | null; started_at: string; ended_at: string | null; billable_minutes: number | null; total: number | null; deposit_applied: number }
+export interface PublicVenue { name: string; slug: string }

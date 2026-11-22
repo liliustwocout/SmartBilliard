@@ -67,7 +67,7 @@ function CheckoutDialog({ venueId, table, isOwner, onClose, onDone }:
     if (!sessionId) return;
     if (mode === 'pay') {
       const result = await api<SessionView>(`${base}/checkout`, { body: { payment_method: method } });
-      toast('success', `Đã thu ${money(result.amount_vnd)} · ${table?.name}.`);
+      toast('success', `Đã thu ${money(result.amount_due)} · ${table?.name}.`);
       onDone(sessionId);
     } else {
       await api(`${base}/void`, { body: { reason } });
@@ -93,7 +93,9 @@ function CheckoutDialog({ venueId, table, isOwner, onClose, onDone }:
             <dt>Đã chơi</dt><dd className="num">{duration(quote.elapsed_seconds)}</dd>
             <dt>Tiền giờ</dt><dd className="num">{quote.billable_minutes} phút × {money(quote.rate_snapshot)}/giờ = {money(quote.table_amount)}</dd>
             <dt>Dịch vụ</dt><dd className="num" data-testid="items-amount">{money(quote.items_amount)}</dd>
-            <dt>Cần thu</dt><dd className="num" data-testid="quote-amount" style={{ fontSize: 'var(--text-2xl)' }}>{money(quote.amount_vnd)}</dd>
+            <dt>Tổng hoá đơn</dt><dd className="num" data-testid="quote-total">{money(quote.amount_vnd)}</dd>
+            {quote.deposit_applied > 0 && <><dt>Đã cọc (mô phỏng)</dt><dd className="num" data-testid="deposit-applied">− {money(quote.deposit_applied)}</dd></>}
+            <dt>Cần thu</dt><dd className="num" data-testid="quote-amount" style={{ fontSize: 'var(--text-2xl)' }}>{money(quote.amount_due)}</dd>
           </dl>
 
           <div className="stack" style={{ gap: 'var(--space-2)' }}>
