@@ -1,55 +1,118 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import App from './App';
+import { setCsrfToken } from './api';
+import type { AuthUser } from './api';
 import { applyTheme, currentTheme } from './theme';
 import { Badge, Button, DataTable, EmptyState, Field, TableCard } from './ui/components';
 
-const ok = () => new Response(JSON.stringify({ status: 'ok', app: 'manage', time: 't' }));
+const owner: AuthUser = {
+  id: 2, role: 'owner', login: 'owner-a', display_name: 'Chủ quán A', must_change_password: false,
+  venue: { id: 1, name: 'Quán A', slug: 'quan-a' }, csrf_token: 'csrf-123',
+};
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+const health = { status: 'ok', app: 'manage', time: 't' };
 
-beforeEach(() => { window.location.hash = ''; });
+type Handler = (init?: RequestInit) => Response | Promise<Response>;
+function mockApi(routes: Record<string, Handler>) {
+  const calls: Array<{ key: string; init?: RequestInit }> = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    const key = `${init?.method ?? 'GET'} ${url}`;
+    calls.push({ key, init });
+    const handler = routes[key];
+    return handler ? handler(init) : json({ detail: 'not mocked' }, 404);
+  }));
+  return calls;
+}
+
+beforeEach(() => { window.location.hash = ''; setCsrfToken(''); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-describe('dashboard route', () => {
-  it('shows ready badge and an empty state when the manage API answers', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ok()));
+describe('authentication flow', () => {
+  it('shows the login form when there is no session', async () => {
+    mockApi({ 'GET /api/auth/me': () => json({ detail: 'Cần đăng nhập.' }, 401) });
     render(<App />);
-    expect(await screen.findByText('Máy chủ sẵn sàng')).toBeTruthy();
-    expect(screen.getByText('Quán chưa có bàn nào')).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Đăng nhập' })).toBeTruthy();
   });
 
-  it('refuses a non-manage server', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ status: 'ok', app: 'demo', time: 't' }))));
+  it('shows a connection notice when the server cannot be reached', async () => {
+    mockApi({ 'GET /api/auth/me': () => json({}, 503) });
     render(<App />);
-    expect(await screen.findByText(/nhầm máy chủ/)).toBeTruthy();
+    expect(await screen.findByText(/Chưa kết nối được máy chủ/)).toBeTruthy();
   });
 
-  it('shows an error badge when the API is down', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('x', { status: 503 })));
+  it('validates empty fields and shows the server message on a bad login', async () => {
+    mockApi({
+      'GET /api/auth/me': () => json({ detail: 'x' }, 401),
+      'POST /api/auth/login': () => json({ detail: 'Sai tài khoản hoặc mật khẩu.' }, 401),
+    });
     render(<App />);
-    expect(await screen.findByText(/Mất kết nối/)).toBeTruthy();
-  });
-});
-
-describe('login route', () => {
-  it('validates required fields and never claims a login succeeded', async () => {
-    window.location.hash = '#/login';
-    render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: 'Đăng nhập' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Đăng nhập' }));
     expect(await screen.findByText('Nhập email hoặc số điện thoại.')).toBeTruthy();
-    expect(screen.getByText('Nhập mật khẩu.')).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Email hoặc số điện thoại'), { target: { value: 'a@b.c' } });
     fireEvent.change(screen.getByLabelText('Mật khẩu'), { target: { value: 'x' } });
     fireEvent.click(screen.getByRole('button', { name: 'Đăng nhập' }));
-    expect(await screen.findByText(/chưa hoạt động/)).toBeTruthy();
+    expect(await screen.findByText('Sai tài khoản hoặc mật khẩu.')).toBeTruthy();
+  });
+
+  it('logs in, shows the shell, sends the CSRF token on writes, and logs out', async () => {
+    const calls = mockApi({
+      'GET /api/auth/me': () => json({ detail: 'x' }, 401),
+      'POST /api/auth/login': () => json(owner),
+      'GET /api/health': () => json(health),
+      'POST /api/auth/logout': () => json({ ok: true }),
+    });
+    render(<App />);
+    await screen.findByRole('button', { name: 'Đăng nhập' });
+    fireEvent.change(screen.getByLabelText('Email hoặc số điện thoại'), { target: { value: 'owner-a' } });
+    fireEvent.change(screen.getByLabelText('Mật khẩu'), { target: { value: 'secret-pass-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Đăng nhập' }));
+    expect(await screen.findByText('Chủ quán A')).toBeTruthy();
+    expect(screen.getByText(/Chủ quán · Quán A/)).toBeTruthy();
+    expect(await screen.findByText('Máy chủ sẵn sàng')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Đăng xuất' }));
+    expect(await screen.findByRole('button', { name: 'Đăng nhập' })).toBeTruthy();
+    const logout = calls.find(c => c.key === 'POST /api/auth/logout');
+    expect((logout?.init?.headers as Record<string, string>)['X-CSRF-Token']).toBe('csrf-123');
+  });
+
+  it('forces a password change before anything else and checks the confirmation', async () => {
+    const calls = mockApi({
+      'GET /api/auth/me': () => json({ ...owner, must_change_password: true }),
+      'POST /api/auth/change-password': () => json({ ok: true }),
+    });
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: 'Đổi mật khẩu' })).toBeTruthy();
+    expect(screen.queryByText('Tổng quan bàn')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Mật khẩu hiện tại'), { target: { value: 'old-pass-123' } });
+    fireEvent.change(screen.getByLabelText('Mật khẩu mới'), { target: { value: 'Mat-khau-moi-2026' } });
+    fireEvent.change(screen.getByLabelText('Nhập lại mật khẩu mới'), { target: { value: 'khac' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Lưu mật khẩu mới' }));
+    expect(await screen.findByText('Hai lần nhập mật khẩu mới chưa khớp.')).toBeTruthy();
+    expect(calls.some(c => c.key === 'POST /api/auth/change-password')).toBe(false);
   });
 });
 
-describe('design page', () => {
-  it('labels sample data as illustrative', () => {
-    window.location.hash = '#/design';
+describe('dashboard', () => {
+  it('shows the empty state and an error badge if the API stops answering', async () => {
+    mockApi({
+      'GET /api/auth/me': () => json(owner),
+      'GET /api/health': () => json({ status: 'ok', app: 'demo', time: 't' }),
+    });
     render(<App />);
-    expect(screen.getByText(/không phải số liệu thật/)).toBeTruthy();
+    expect(await screen.findByText('Quán chưa có bàn nào')).toBeTruthy();
+    expect(await screen.findByText(/nhầm máy chủ/)).toBeTruthy();
+  });
+});
+
+describe('design page (development only)', () => {
+  it('labels sample data as illustrative', async () => {
+    window.location.hash = '#/design';
+    mockApi({ 'GET /api/auth/me': () => json(owner) });
+    render(<App />);
+    await waitFor(() => expect(screen.getByText(/không phải số liệu thật/)).toBeTruthy());
   });
 });
 
@@ -85,9 +148,11 @@ describe('ui kit', () => {
 });
 
 describe('theme', () => {
-  it('applies and reads the theme', () => {
+  it('defaults to light and applies the chosen theme', () => {
+    delete document.documentElement.dataset.theme;
+    localStorage.clear();
+    expect(currentTheme()).toBe('light');
     applyTheme('dark');
-    expect(document.documentElement.dataset.theme).toBe('dark');
     expect(currentTheme()).toBe('dark');
     applyTheme('light');
     expect(currentTheme()).toBe('light');

@@ -25,6 +25,7 @@ Tập dùng được là 84 clip; chia `--test-camera cam1 --val-video cam2_03.m
 - **CP4** — Thêm cân bằng lớp tạm (`--balance`): augment lớp ít chỉ trên train + class_weights; có test hồi quy. Chưa huấn luyện nên chưa biết hiệu quả.
 - **CP5 (phòng quản lý M0)** — Nhánh `feat/manage-m0`: khung `apps/manage_api` (config MANAGE_*, DB riêng, /api/health, host/origin check) + `apps/manage_web` (cổng 5174), thêm vào CI. Kế hoạch: `docs/planning/MANAGEMENT_ROOM_PLAN.md`. Chưa có auth/dữ liệu nghiệp vụ (M1).
 - **CP6 (phòng quản lý M0.5)** — Design system "Nỉ bàn" trong `apps/manage_web`: tokens sáng/tối (mặc định sáng, không dùng shadow), font Barlow Condensed + Be Vietnam Pro (tự host), bộ component (Button, Field, Badge, Card, Skeleton, EmptyState, ErrorState, Tabs, DataTable, Modal, ConfirmDialog, Toast, TableCard, FeltTable), trang đăng nhập / tổng quan rỗng / `#/design`. 10 test, build đạt, đã xem ảnh desktop sáng-tối và mobile 375px (không cuộn ngang). Chưa thử iOS Safari/Android thật; chưa có biểu đồ/DateRange (M6).
+- **CP7 (phòng quản lý M1)** — Backend: bảng `venues/users/auth_sessions/audit_log`, scrypt, cookie HttpOnly + CSRF, khoá 5 lần sai/15 phút, đổi mật khẩu bắt buộc (thu hồi phiên khác), `require_roles`, `venue_scope` (quán khác = 404), script `scripts/manage_create_admin.py`. Frontend: đăng nhập thật, đổi mật khẩu, đăng xuất. Smoke HTTP thật bằng curl đạt. Chưa có CRUD quán (M2), throttle IP chỉ trong bộ nhớ 1 process, chưa tin X-Forwarded-For.
 
 ## Phần chưa kiểm chứng / giới hạn
 

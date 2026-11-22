@@ -1,22 +1,28 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
+import { useAuth } from '../auth';
 import { Button, Field } from '../ui/components';
 import { FeltTable, BrandBall } from '../ui/FeltTable';
 import { ThemeToggle } from '../ui/ThemeToggle';
 
-export function LoginPage() {
+export function LoginPage({ offline }: { offline?: string }) {
+  const { login } = useAuth();
   const [account, setAccount] = useState('');
   const [password, setPassword] = useState('');
   const [errors, setErrors] = useState<{ account?: string; password?: string }>({});
-  const [submitted, setSubmitted] = useState(false);
+  const [failure, setFailure] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
     const next: typeof errors = {};
     if (!account.trim()) next.account = 'Nhập email hoặc số điện thoại.';
     if (!password) next.password = 'Nhập mật khẩu.';
     setErrors(next);
-    setSubmitted(Object.keys(next).length === 0);
+    setFailure('');
+    if (Object.keys(next).length) return;
+    setBusy(true);
+    try { await login(account, password); } catch (reason) { setFailure((reason as Error).message); } finally { setBusy(false); }
   }
 
   return (
@@ -35,12 +41,13 @@ export function LoginPage() {
             <h2>Đăng nhập</h2>
             <ThemeToggle />
           </div>
+          {offline && <p className="notice" role="alert">{`Chưa kết nối được máy chủ: ${offline}`}</p>}
           <Field label="Email hoặc số điện thoại" autoComplete="username" value={account} error={errors.account}
             onChange={e => setAccount(e.target.value)} />
           <Field label="Mật khẩu" type="password" autoComplete="current-password" value={password} error={errors.password}
             onChange={e => setPassword(e.target.value)} hint="Quên mật khẩu? Liên hệ quản trị viên hoặc chủ quán." />
-          {submitted && <p className="notice" role="status">Đăng nhập chưa hoạt động: máy chủ chưa có tài khoản (đang phát triển).</p>}
-          <Button type="submit" variant="primary" size="lg" block>Đăng nhập</Button>
+          {failure && <p className="field-error" role="alert">{failure}</p>}
+          <Button type="submit" variant="primary" size="lg" block loading={busy}>Đăng nhập</Button>
         </form>
       </main>
     </div>

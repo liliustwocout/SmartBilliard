@@ -3,15 +3,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from fastapi import FastAPI
-from sqlalchemy import create_engine, event, text
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, HTTPException
+from sqlalchemy import create_engine, event, select, text
+from sqlalchemy.orm import Session
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import StaticPool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import JSONResponse
 
 from apps.manage_api.config import ManageSettings
-from apps.manage_api.models import Base
+from apps.manage_api.auth import Principal, build_auth
+from apps.manage_api.models import AuditLog, Base, Venue
 
 
 def create_app(settings: ManageSettings | None = None,
@@ -48,6 +52,29 @@ def create_app(settings: ManageSettings | None = None,
             if origin is not None and origin not in settings.allowed_origins:
                 return JSONResponse({"detail": "Nguồn yêu cầu không được chấp nhận"}, status_code=403)
         return await call_next(request)
+
+    def get_db():
+        with Session(engine) as db:
+            yield db
+
+    auth_router, current_principal, require_roles, venue_scope = build_auth(get_db, clock, settings.cookie_secure)
+    app.include_router(auth_router)
+    app.state.clock = clock
+
+    @app.get("/api/venues/{venue_id}")
+    def get_venue(venue_id: int, principal: Annotated[Principal, Depends(venue_scope)],
+                  db: Annotated[Session, Depends(get_db)]):
+        venue = db.get(Venue, venue_id)
+        if venue is None:
+            raise HTTPException(404, "Không tìm thấy quán.")
+        return {"id": venue.id, "name": venue.name, "slug": venue.slug, "status": venue.status}
+
+    @app.get("/api/admin/audit")
+    def admin_audit(_: Annotated[Principal, Depends(require_roles("platform_admin"))],
+                    db: Annotated[Session, Depends(get_db)], limit: int = 100):
+        rows = db.scalars(select(AuditLog).order_by(AuditLog.id.desc()).limit(max(1, min(limit, 500))))
+        return [{"id": r.id, "at": r.at.isoformat() + "Z", "actor_user_id": r.actor_user_id, "venue_id": r.venue_id,
+                 "action": r.action, "target": r.target, "detail": r.detail} for r in rows]
 
     @app.get("/api/health")
     async def health():
