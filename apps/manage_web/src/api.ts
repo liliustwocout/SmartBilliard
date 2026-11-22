@@ -115,3 +115,12 @@ export interface GameStats {
 }
 export interface CheckinCode { mode: CheckinMode; enabled: boolean; code: string; expires_in_seconds: number; rotation_seconds: number }
 export interface QuoteVoucher { id: number; code: string; label: string; kind: 'discount_vnd' | 'free_minutes'; value: number; expires_at: string }
+
+export interface RevenueReport {
+  from: string; to: string; group: 'day' | 'week' | 'month';
+  totals: { revenue: number; sessions: number; table_amount: number; items_amount: number; voucher_discount: number; deposit_applied: number; collected_cash: number; collected_transfer: number };
+  series: Array<{ key: string; revenue: number; sessions: number }>;
+  by_table: Array<{ table_id: number; table_name: string | null; sessions: number; minutes: number; revenue: number }>;
+  top_items: Array<{ name: string; quantity: number; amount: number }>;
+  sessions_by_start_hour: number[];
+}

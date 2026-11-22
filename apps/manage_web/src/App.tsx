@@ -16,6 +16,7 @@ import { MyHistoryPage } from './pages/customer/MyHistoryPage';
 import { RewardsPage } from './pages/customer/RewardsPage';
 import { CheckinCodePage } from './pages/shop/CheckinCodePage';
 import { GamePage } from './pages/shop/GamePage';
+import { ReportsPage } from './pages/shop/ReportsPage';
 import { BookingsPage } from './pages/shop/BookingsPage';
 import { CustomersPage } from './pages/shop/CustomersPage';
 import { MenuPage } from './pages/shop/MenuPage';
@@ -40,6 +41,7 @@ function Page({ route, user }: { route: Route; user: AuthUser }) {
   if (route.name === 'bookings') return <BookingsPage />;
   if (route.name === 'checkin-code') return <CheckinCodePage />;
   if (route.name === 'game' && user.role === 'owner') return <GamePage />;
+  if (route.name === 'reports' && user.role === 'owner') return <ReportsPage />;
   if (route.name === 'customers') return <CustomersPage />;
   if (route.name === 'tables' && user.role === 'owner') return <TablesManagePage />;
   if (route.name === 'menu' && user.role === 'owner') return <MenuPage />;

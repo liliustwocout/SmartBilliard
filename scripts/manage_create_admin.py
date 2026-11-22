@@ -26,19 +26,22 @@ def create_admin(database_url: str, login: str, name: str, password: str, must_c
     if problem:
         raise ValueError(problem)
     engine = create_engine(database_url)
-    Base.metadata.create_all(engine)
-    login = login.strip().lower()
-    with Session(engine) as db:
-        if db.scalar(select(User).where(User.login == login, User.role != "customer")):
-            raise ValueError("Tên đăng nhập đã tồn tại.")
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        user = User(role="platform_admin", login=login, display_name=name, password_hash=hash_password(password),
-                    venue_id=None, must_change_password=must_change, created_at=now)
-        db.add(user)
-        db.flush()
-        audit(db, now, "admin_created", actor=user, target=login, detail={"via": "script"})
-        db.commit()
-        return user.id
+    try:
+        Base.metadata.create_all(engine)
+        login = login.strip().lower()
+        with Session(engine) as db:
+            if db.scalar(select(User).where(User.login == login, User.role != "customer")):
+                raise ValueError("Tên đăng nhập đã tồn tại.")
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            user = User(role="platform_admin", login=login, display_name=name, password_hash=hash_password(password),
+                        venue_id=None, must_change_password=must_change, created_at=now)
+            db.add(user)
+            db.flush()
+            audit(db, now, "admin_created", actor=user, target=login, detail={"via": "script"})
+            db.commit()
+            return user.id
+    finally:
+        engine.dispose()  # nhả tệp DB (Windows không cho xoá tệp đang mở)
 
 
 def main() -> None:

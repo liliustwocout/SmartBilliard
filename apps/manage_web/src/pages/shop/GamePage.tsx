@@ -34,7 +34,8 @@ function CheckinTab({ venueId, draft, setDraft }: { venueId: number; draft: Game
   const networks = useLoad(() => api<{ networks: Array<{ cidr: string; label: string | null }>; your_ip: string }>(`/venues/${venueId}/networks`), [venueId]);
   const [list, setList] = useState<Array<{ cidr: string; label: string }>>([]);
   const [error, setError] = useState('');
-  useEffect(() => { if (networks.data) setList(networks.data.networks.map(n => ({ cidr: n.cidr, label: n.label ?? '' }))); }, [networks.data]);
+  const [ready, setReady] = useState(false); // chỉ cho thao tác sau khi danh sách đã nạp xong, tránh bị ghi đè
+  useEffect(() => { if (networks.data) { setList(networks.data.networks.map(n => ({ cidr: n.cidr, label: n.label ?? '' }))); setReady(true); } }, [networks.data]);
 
   async function saveNetworks() {
     setError('');
@@ -59,7 +60,7 @@ function CheckinTab({ venueId, draft, setDraft }: { venueId: number; draft: Game
       <Card><div className="stack">
         <h2>Mạng wifi của quán</h2>
         <p className="muted">Trình duyệt không đọc được tên wifi, nên quán khai báo địa chỉ IP công cộng của mạng quán. Khách chỉ check-in được khi đang dùng đúng mạng này. Khách dùng VPN hoặc chung đường truyền với nơi khác có thể bị nhầm: hãy kết hợp mã tại quầy nếu cần chặt hơn.</p>
-        {networks.data && <p>IP bạn đang dùng: <strong className="num">{networks.data.your_ip}</strong> {!list.some(n => n.cidr === networks.data!.your_ip) &&
+        {ready && networks.data && <p>IP bạn đang dùng: <strong className="num">{networks.data.your_ip}</strong> {!list.some(n => n.cidr === networks.data!.your_ip) &&
           <Button size="sm" onClick={() => setList([...list, { cidr: networks.data!.your_ip, label: 'Mạng hiện tại' }])}>Thêm IP này</Button>}</p>}
         {list.map((n, i) => (
           <div key={i} className="row" style={{ alignItems: 'flex-end' }}>
@@ -68,9 +69,10 @@ function CheckinTab({ venueId, draft, setDraft }: { venueId: number; draft: Game
             <Button variant="ghost" aria-label="Xoá mạng này" onClick={() => setList(list.filter((_, j) => j !== i))}>✕</Button>
           </div>
         ))}
-        {list.length === 0 && <p className="muted">Chưa khai báo mạng nào.</p>}
+        {!ready && !networks.error && <Skeleton height={60} />}
+        {ready && list.length === 0 && <p className="muted">Chưa khai báo mạng nào.</p>}
         {error && <p className="field-error" role="alert">{error}</p>}
-        <div className="row"><Button onClick={() => setList([...list, { cidr: '', label: '' }])} disabled={list.length >= 10}>Thêm mạng</Button><Button variant="primary" onClick={() => void saveNetworks()}>Lưu mạng</Button></div>
+        <div className="row"><Button onClick={() => setList([...list, { cidr: '', label: '' }])} disabled={!ready || list.length >= 10}>Thêm mạng</Button><Button variant="primary" disabled={!ready} onClick={() => void saveNetworks()}>Lưu mạng</Button></div>
       </div></Card>
     </div>
   );
@@ -132,9 +134,9 @@ function WheelTab({ venueId, draft, setDraft }: { venueId: number; draft: GameSe
         <p className="muted">Tỷ lệ này được hiển thị công khai cho khách. Voucher dùng được {rows[0]?.days ?? 30} ngày kể từ lúc trúng. Phải có ít nhất một ô "Chúc may mắn".</p>
         {error && <p className="field-error" role="alert">{error}</p>}
         <div className="row">
-          <Button onClick={() => setRows([...rows, { name: '', kind: 'points', value: '10', percent: '0', stock: '', days: '30' }])} disabled={rows.length >= 12}>Thêm ô</Button>
-          <Button variant="ghost" onClick={() => setRows(SAMPLE)}>Điền cấu hình mẫu</Button>
-          <Button variant="primary" loading={busy} onClick={() => void save()}>Lưu vòng quay</Button>
+          <Button onClick={() => setRows([...rows, { name: '', kind: 'points', value: '10', percent: '0', stock: '', days: '30' }])} disabled={!wheel.data || rows.length >= 12}>Thêm ô</Button>
+          <Button variant="ghost" disabled={!wheel.data} onClick={() => setRows(SAMPLE)}>Điền cấu hình mẫu</Button>
+          <Button variant="primary" loading={busy} disabled={!wheel.data} onClick={() => void save()}>Lưu vòng quay</Button>
         </div>
       </div></Card>
 

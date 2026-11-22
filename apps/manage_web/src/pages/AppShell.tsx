@@ -6,7 +6,7 @@ import { BrandBall } from '../ui/FeltTable';
 import { ThemeToggle } from '../ui/ThemeToggle';
 
 export type Route =
-  | { name: 'home' } | { name: 'venues' } | { name: 'venue'; id: number } | { name: 'audit' } | { name: 'tables' } | { name: 'history' } | { name: 'staff' } | { name: 'menu' } | { name: 'customers' } | { name: 'bookings' } | { name: 'my-bookings' } | { name: 'my-history' } | { name: 'my-rewards' } | { name: 'game' } | { name: 'checkin-code' }
+  | { name: 'home' } | { name: 'venues' } | { name: 'venue'; id: number } | { name: 'audit' } | { name: 'tables' } | { name: 'history' } | { name: 'staff' } | { name: 'menu' } | { name: 'customers' } | { name: 'bookings' } | { name: 'my-bookings' } | { name: 'my-history' } | { name: 'my-rewards' } | { name: 'game' } | { name: 'checkin-code' } | { name: 'reports' }
   | { name: 'customer-entry'; slug: string } | { name: 'design' };
 
 export function parseRoute(hash: string, dev = import.meta.env.DEV): Route {
@@ -22,6 +22,7 @@ export function parseRoute(hash: string, dev = import.meta.env.DEV): Route {
   if (path === '/my/history') return { name: 'my-history' };
   if (path === '/my/rewards') return { name: 'my-rewards' };
   if (path === '/game') return { name: 'game' };
+  if (path === '/reports') return { name: 'reports' };
   if (path === '/checkin-code') return { name: 'checkin-code' };
   const entry = /^\/c\/([a-z0-9]+(?:-[a-z0-9]+)*)$/.exec(path);
   if (entry) return { name: 'customer-entry', slug: entry[1] };
@@ -44,6 +45,7 @@ const NAV: NavItem[] = [
   { href: '#/customers', label: 'Khách hàng', roles: ['owner', 'staff'], active: r => r.name === 'customers' },
   { href: '#/menu', label: 'Menu dịch vụ', roles: ['owner'], active: r => r.name === 'menu' },
   { href: '#/staff', label: 'Nhân viên', roles: ['owner'], active: r => r.name === 'staff' },
+  { href: '#/reports', label: 'Báo cáo', roles: ['owner'], active: r => r.name === 'reports' },
   { href: '#/history', label: 'Lịch sử phiên', roles: ['owner', 'staff'], active: r => r.name === 'history' },
   { href: '#/audit', label: 'Nhật ký', roles: ['platform_admin'], active: r => r.name === 'audit' },
   { href: '#/design', label: 'Giao diện mẫu', devOnly: true, active: r => r.name === 'design' },

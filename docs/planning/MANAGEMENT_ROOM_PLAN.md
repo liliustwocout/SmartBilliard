@@ -1,5 +1,7 @@
 # Kế hoạch "Phòng quản lý" (sản phẩm thật) — tách biệt với phòng demo
 
+> **Trạng thái 22/11/2026:** M0–M6 đã triển khai (xem README, [MANAGE_API_SPEC](../architecture/MANAGE_API_SPEC.md), [ADR 0004](../architecture/ADR/0004-management-room.md)). Chưa làm: M7 (cầu nối camera/AI), huy hiệu/bảng xếp hạng/nhiệm vụ tuần, thanh toán thật, nhắc lịch, giờ mở cửa, PostgreSQL/migration. Bản mô tả dưới đây là kế hoạch gốc.
+
 Ngày: 22/11/2026. Đây là **kế hoạch**, chưa có code. Dựa trên hiện trạng: `apps/api` + `apps/web` là phòng demo (SQLite một quán, không đăng nhập, chỉ bind loopback, có mô phỏng/camera/lab/ROI).
 
 ## 1. Nguyên tắc tách biệt

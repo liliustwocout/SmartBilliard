@@ -12,6 +12,7 @@ coverage/
 data/*.db*
 data/*.sqlite*
 data/recordings/
+data/backups/
 data/datasets/
 *.log
 .playwright-cli/

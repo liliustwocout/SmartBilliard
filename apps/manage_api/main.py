@@ -17,6 +17,7 @@ from apps.manage_api.config import ManageSettings
 from apps.manage_api.admin import build_admin
 from apps.manage_api.booking_api import build_booking_api
 from apps.manage_api.game_api import build_game_api
+from apps.manage_api.report_api import build_report_api
 from apps.manage_api.payments import provider_for
 from apps.manage_api.shop_api import build_shop_api
 from apps.manage_api.venue_api import build_venue_api
@@ -73,6 +74,7 @@ def create_app(settings: ManageSettings | None = None,
     booking_router, public_router = build_booking_api(get_db, require_venue_roles, clock, settings.timezone, provider_for(settings.payment_provider))
     app.include_router(booking_router)
     app.include_router(public_router)
+    app.include_router(build_report_api(get_db, require_venue_roles, clock, settings.timezone))
     app.include_router(build_game_api(get_db, require_venue_roles, clock, settings.timezone, settings.trusted_proxies))
     app.state.clock = clock
 

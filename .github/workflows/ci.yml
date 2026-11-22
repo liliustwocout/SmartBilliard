@@ -56,3 +56,5 @@ jobs:
         run: npm run build
       - name: Smoke-test real HTTP and WebSocket flow
         run: python scripts/smoke.py
+      - name: Smoke-test the management room over real HTTP
+        run: python scripts/manage_smoke.py
