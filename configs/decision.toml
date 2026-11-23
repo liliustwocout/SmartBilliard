@@ -1,5 +1,6 @@
-# Demo thresholds, not measured AI performance. Durations are seconds.
-policy = "PERSON_ONLY"
+# SmartBilliard Decision Configuration (Pure Temporal & Action Policy)
+# Supports: "SMART_STANCE" (Pose + Felt Motion + Spatial Movement), "POSE_AND_CUE", "PERSON_ONLY"
+policy = "SMART_STANCE"
 presence_seconds = 8.0
 confidence_enter = 0.75
 confidence_exit = 0.55
@@ -9,3 +10,4 @@ cooldown_seconds = 15.0
 cue_confidence = 0.8
 unbilled_alert_seconds = 300.0
 playing_hold_grace_seconds = 25.0
+

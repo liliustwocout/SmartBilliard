@@ -13,6 +13,8 @@ class SimulatedObservation(BaseModel):
     ambiguous: bool = False
     cue_confidence: float | None = Field(default=None, ge=0, le=1)
     activity_state: Literal["PLAYING", "NOT_PLAYING", "UNKNOWN"] | None = None
+    felt_motion: bool = False
+    sides_visited: int = 1
 
 
 class IngestionObservation(BaseModel):
@@ -24,6 +26,8 @@ class IngestionObservation(BaseModel):
     ambiguous: bool = False
     cue_confidence: float | None = Field(default=None, ge=0, le=1)
     activity_state: Literal["PLAYING", "NOT_PLAYING", "UNKNOWN"] | None = None
+    felt_motion: bool = False
+    sides_visited: int = 1
     source: Literal["CAMERA", "VIDEO", "SIMULATED"] = "CAMERA"
     track_ids: list[int] = Field(default_factory=list)
     people_count: int = 1

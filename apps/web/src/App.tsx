@@ -270,7 +270,7 @@ export default function App() {
             </section>
           ) : (
             <>
-              {tab === 'dashboard' && (
+              <div style={{ display: tab === 'dashboard' ? 'block' : 'none' }}>
                 <TablesView
                   data={data}
                   expandedTableId={expandedTableId}
@@ -280,11 +280,12 @@ export default function App() {
                   onShowCheckout={session => void showCheckout(session)}
                   onViewCamera={() => setTab('live')}
                 />
-              )}
+              </div>
 
-              {tab === 'live' && (
+              <div style={{ display: tab === 'live' ? 'block' : 'none' }}>
                 <LiveView
                   data={data}
+                  active={tab === 'live'}
                   locked={locked}
                   onStartCamera={startCamera}
                   onStopCamera={stopCamera}
@@ -292,9 +293,9 @@ export default function App() {
                   onNotice={handleChildNotice}
                   onError={handleChildError}
                 />
-              )}
+              </div>
 
-              {tab === 'lab' && (
+              <div style={{ display: tab === 'lab' ? 'block' : 'none' }}>
                 <LabView
                   data={data}
                   online={online}
@@ -324,9 +325,9 @@ export default function App() {
                   onNotice={handleChildNotice}
                   onError={handleChildError}
                 />
-              )}
+              </div>
 
-              {tab === 'history' && (
+              <div style={{ display: tab === 'history' ? 'block' : 'none' }}>
                 <HistoryView
                   data={data}
                   history={history}
@@ -334,23 +335,24 @@ export default function App() {
                   historyLoading={historyLoading}
                   onChangePage={setHistoryPage}
                 />
-              )}
+              </div>
 
-              {tab === 'calibration' && (
+              <div style={{ display: tab === 'calibration' ? 'block' : 'none' }}>
                 <RoiEditor
                   tableCount={data.tables.length}
+                  active={tab === 'calibration'}
                   onSaved={() => setNotice('Cấu hình ROI đã được lưu và cập nhật.')}
                 />
-              )}
+              </div>
 
-              {tab === 'system' && (
+              <div style={{ display: tab === 'system' ? 'block' : 'none' }}>
                 <SystemView
                   data={data}
                   locked={locked}
                   onNotice={msg => { setError(''); setNotice(msg); }}
                   onError={msg => { setNotice(''); setError(msg); }}
                 />
-              )}
+              </div>
             </>
           )}
 

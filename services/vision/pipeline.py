@@ -12,6 +12,7 @@ import numpy as np
 
 from services.vision.contracts import CueDetector, Detection, VideoSource
 from services.vision.detector import YoloCueDetector, YoloPersonDetector, YoloPoseDetector
+from services.vision.felt import FeltMotionDetector, FeltMotionResult
 from services.vision.mapper import TableObservationSummary, TableZoneMapper
 from services.vision.tracker import ByteTracker
 
@@ -28,13 +29,16 @@ class VisionPipeline:
         tracker: ByteTracker | None = None,
         mapper: TableZoneMapper | None = None,
         cue_detector: CueDetector | None = None,
+        felt_detector: FeltMotionDetector | None = None,
     ) -> None:
         self.source = source
         self.detector = detector or YoloPoseDetector()
         self.tracker = tracker or ByteTracker()
         self.mapper = mapper
         self.cue_detector = cue_detector or YoloCueDetector()
+        self.felt_detector = felt_detector or FeltMotionDetector()
         self.inference_skipped = False
+
 
     def process_next_frame(
         self, timestamp: float | None = None
@@ -101,6 +105,8 @@ class VisionPipeline:
         if self.inference_skipped:
             # Tracks from before the pause are stale; start clean when inference resumes.
             self.tracker.reset()
+            if self.felt_detector is not None:
+                self.felt_detector.reset()
             self.inference_skipped = False
         ok, frame, detections = self.process_next_frame(timestamp=ts)
         if not ok or frame is None or self.mapper is None:
@@ -110,5 +116,16 @@ class VisionPipeline:
         trusted_detections = detections
         if not getattr(self.cue_detector, "validated", False):
             trusted_detections = [d for d in detections if d.kind != "cue"]
-        _, table_summaries = self.mapper.map_frame(trusted_detections, timestamp=ts)
+
+        felt_results: dict[int, FeltMotionResult] = {}
+        if self.felt_detector is not None:
+            for table in self.mapper.config.tables:
+                if table.enabled and table.table_id not in paused_table_ids:
+                    felt_results[table.table_id] = self.felt_detector.detect_motion(
+                        frame, table.table_id, table.play_polygon
+                    )
+
+        _, table_summaries = self.mapper.map_frame(
+            trusted_detections, timestamp=ts, felt_results=felt_results
+        )
         return True, frame, detections, table_summaries

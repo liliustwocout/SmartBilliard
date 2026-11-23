@@ -41,7 +41,13 @@ def test_draw_frame_annotations_with_zones_and_detections():
     ]
     summaries = {
         1: TableObservationSummary(
-            table_id=1, present=True, confidence=0.88, people_count=1, track_ids=[1]
+            table_id=1,
+            present=True,
+            confidence=0.88,
+            people_count=1,
+            track_ids=[1],
+            activity_state="PLAYING",
+            activity_reason="PLAYING_ACTIVE",
         )
     }
 

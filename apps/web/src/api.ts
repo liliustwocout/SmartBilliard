@@ -1,18 +1,26 @@
 import { useEffect, useState } from 'react';
 import type { Snapshot } from './types';
 
-export async function request<T>(path: string, body?: unknown, timeoutMs = 8000): Promise<T> {
-  const response = await fetch(`/api${path}`, {
-    method: body === undefined ? 'GET' : 'POST',
-    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(typeof error.detail === 'string' ? error.detail : `Yêu cầu thất bại (${response.status})`);
+export async function request<T>(path: string, body?: unknown, timeoutMs = 25000): Promise<T> {
+  try {
+    const response = await fetch(`/api${path}`, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(typeof error.detail === 'string' ? error.detail : `Yêu cầu thất bại (${response.status})`);
+    }
+    return response.json() as Promise<T>;
+  } catch (err: unknown) {
+    const e = err as Error;
+    if (e.name === 'AbortError' || e.name === 'TimeoutError' || (e.message && e.message.toLowerCase().includes('timed out'))) {
+      throw new Error('Máy chủ đang bận xử lý hoặc phản hồi quá thời gian chờ. Vui lòng thử lại sau giây lát.');
+    }
+    throw err;
   }
-  return response.json() as Promise<T>;
 }
 
 export async function uploadVideoFile<T>(

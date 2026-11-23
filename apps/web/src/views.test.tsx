@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   RoiEditor,
   addTableZoneToConfig,
+  alignPerspectivePolygon,
   buildNonOverlappingStandingPolygon,
   detectLocalOverlaps,
   getNextUncalibratedTableId,
@@ -412,5 +413,52 @@ describe('reorganized UI views', () => {
     );
     expect(htmlOverlap).toContain('Cảnh báo chồng lấn vùng đứng (AMBIGUOUS)');
     expect(detectLocalOverlaps(toggleTableEnabledInConfig(overlappingCfg, 2, false).tables)).toHaveLength(0);
+  });
+
+  it('alignPerspectivePolygon preserves orientation and creates a symmetric perspective quadrilateral', () => {
+    // Slightly skewed trapezoid from perspective camera
+    const skewed: [number, number][] = [
+      [0.2, 0.2],
+      [0.6, 0.22],
+      [0.65, 0.45],
+      [0.15, 0.43],
+    ];
+    const aligned = alignPerspectivePolygon(skewed);
+    expect(aligned).toHaveLength(4);
+    for (const [x, y] of aligned) {
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(x).toBeLessThanOrEqual(1);
+      expect(y).toBeGreaterThanOrEqual(0);
+      expect(y).toBeLessThanOrEqual(1);
+    }
+    // Verify top edge is higher than bottom edge
+    expect(aligned[0][1]).toBeLessThan(aligned[3][1]);
+    expect(aligned[1][1]).toBeLessThan(aligned[2][1]);
+    // Verify left edge is left of right edge
+    expect(aligned[0][0]).toBeLessThan(aligned[1][0]);
+    expect(aligned[3][0]).toBeLessThan(aligned[2][0]);
+  });
+
+  it('renders RoiEditor with 4-corner mode, perspective align, and standing margin controls', () => {
+    const baseConfig: CalibrationConfig = {
+      camera_id: 'cam_overhead_01',
+      calibration_status: 'CALIBRATED',
+      coordinate_system: 'NORMALIZED_0_1',
+      tables: [
+        {
+          table_id: 1,
+          enabled: true,
+          play_polygon: [[0.1, 0.1], [0.3, 0.1], [0.3, 0.3], [0.1, 0.3]],
+          standing_polygon: [[0.05, 0.05], [0.35, 0.05], [0.35, 0.35], [0.05, 0.35]],
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <RoiEditor tableCount={2} initialResponse={{ config: baseConfig, overlaps: [] }} />,
+    );
+    expect(html).toContain('Chấm 4 góc vẽ lại bàn này');
+    expect(html).toContain('Căn chuẩn phối cảnh (Perspective)');
+    expect(html).toContain('Độ rộng vùng đứng:');
+    expect(html).toContain('Bật kính lúp phóng đại góc (3.5×)');
   });
 });

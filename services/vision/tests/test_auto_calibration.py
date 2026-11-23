@@ -6,9 +6,96 @@ import numpy as np
 import pytest
 
 from apps.api.config import Settings
-from services.vision.auto_calibration import find_table_surfaces, propose_table_zones
+from services.vision.auto_calibration import (
+    _order_points_clockwise,
+    auto_detect_table_zones,
+    find_table_surfaces,
+    generate_standing_polygon,
+    propose_table_zones,
+)
 from services.vision.auto_roi_config import AutoRoiConfig
-from services.vision.calibration import CalibrationConfig, TableZone, polygon_area
+from services.vision.calibration import CalibrationConfig, TableZone, polygon_area, polygons_overlap
+from services.vision.preview import generate_reference_billiard_frame
+
+
+def test_order_points_clockwise():
+    # Jumbled points of a unit box
+    pts = np.array([[1.0, 1.0], [0.0, 0.0], [1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    ordered = _order_points_clockwise(pts)
+    assert len(ordered) == 4
+    # Top-left is first
+    assert ordered[0] == (0.0, 0.0)
+    # Clockwise order: TL -> TR -> BR -> BL
+    assert ordered[1] == (1.0, 0.0)
+    assert ordered[2] == (1.0, 1.0)
+    assert ordered[3] == (0.0, 1.0)
+
+
+def test_auto_detect_empty_or_black_frame():
+    empty = np.zeros((0, 0, 3), dtype=np.uint8)
+    assert auto_detect_table_zones(empty) == []
+
+    black = np.zeros((480, 640, 3), dtype=np.uint8)
+    assert auto_detect_table_zones(black) == []
+
+
+def test_auto_detect_on_synthetic_room_frame():
+    frame = generate_reference_billiard_frame(width=960, height=540)
+    detected = auto_detect_table_zones(frame, max_tables=4)
+
+    assert len(detected) == 4
+    for idx, table in enumerate(detected, start=1):
+        assert table.table_id == idx
+        assert table.enabled is True
+        assert len(table.play_polygon) == 4
+        assert len(table.standing_polygon) == 4
+        # Verify valid coordinates in [0, 1]
+        for px, py in table.play_polygon:
+            assert 0.0 <= px <= 1.0
+            assert 0.0 <= py <= 1.0
+
+
+def test_auto_detect_detects_blue_table():
+    # 640x480 frame with dark floor
+    frame = np.full((480, 640, 3), 30, dtype=np.uint8)
+    # Draw blue felt table in center: BGR (180, 80, 30) -> Blue
+    cv2.rectangle(frame, (160, 120), (480, 360), (180, 80, 30), -1)
+
+    detected = auto_detect_table_zones(frame, max_tables=1)
+    assert len(detected) == 1
+    t = detected[0]
+    assert t.table_id == 1
+    # Check that center is approximately (0.5, 0.5)
+    cx = sum(p[0] for p in t.play_polygon) / 4.0
+    cy = sum(p[1] for p in t.play_polygon) / 4.0
+    assert cx == pytest.approx(0.5, abs=0.08)
+    assert cy == pytest.approx(0.5, abs=0.08)
+
+
+def test_generate_standing_polygon_non_overlapping():
+    play = [(0.2, 0.2), (0.4, 0.2), (0.4, 0.4), (0.2, 0.4)]
+    # Neighbor standing polygon close to it
+    neighbor_standing = [(0.42, 0.2), (0.6, 0.2), (0.6, 0.4), (0.42, 0.4)]
+
+    standing = generate_standing_polygon(play, [neighbor_standing], scale=1.3)
+    assert len(standing) == 4
+    assert not polygons_overlap(standing, neighbor_standing)
+
+
+def test_auto_detect_detects_grey_table_fallback():
+    # 640x480 frame with dark floor
+    frame = np.full((480, 640, 3), 20, dtype=np.uint8)
+    # Draw grey felt table in center: BGR (120, 120, 120) -> Neutral grey
+    cv2.rectangle(frame, (160, 120), (480, 360), (120, 120, 120), -1)
+
+    detected = auto_detect_table_zones(frame, max_tables=1)
+    assert len(detected) == 1
+    t = detected[0]
+    assert t.table_id == 1
+    cx = sum(p[0] for p in t.play_polygon) / 4.0
+    cy = sum(p[1] for p in t.play_polygon) / 4.0
+    assert cx == pytest.approx(0.5, abs=0.08)
+    assert cy == pytest.approx(0.5, abs=0.08)
 
 
 @pytest.fixture
