@@ -283,6 +283,19 @@ export function removeTableZoneFromConfig(config: CalibrationConfig, tableId: nu
   };
 }
 
+export function shouldRefreshRoiPreview(
+  prev: { active: boolean; sourceKey: string },
+  next: { active: boolean; sourceKey: string },
+  hasAutoPreview: boolean,
+): { clearAutoPreview: boolean; refreshPreview: boolean } {
+  const sourceChanged = prev.sourceKey !== next.sourceKey;
+  const becameActive = !prev.active && next.active;
+  return {
+    clearAutoPreview: sourceChanged,
+    refreshPreview: next.active && (sourceChanged || (becameActive && !hasAutoPreview)),
+  };
+}
+
 const CORNER_NAMES = [
   'Góc 1: Trên - Trái (Top-Left)',
   'Góc 2: Trên - Phải (Top-Right)',
@@ -294,11 +307,13 @@ export function RoiEditor({
   tableCount = 4,
   initialResponse,
   active = true,
+  sourceKey = '',
   onSaved,
 }: {
   tableCount?: number;
   initialResponse?: CalibrationResponse;
   active?: boolean;
+  sourceKey?: string;
   onSaved?: () => void;
 }) {
   const maxTables = Math.max(1, Math.min(8, tableCount));
@@ -335,9 +350,26 @@ export function RoiEditor({
   const svgRef = useRef<SVGSVGElement>(null);
   const configRef = useRef(config);
   configRef.current = config;
+  const autoPreviewUrlRef = useRef<string | null>(autoPreviewUrl);
+  autoPreviewUrlRef.current = autoPreviewUrl;
+  const prevViewStateRef = useRef({ active, sourceKey });
   const VIEW_WIDTH = viewSize.width;
   const VIEW_HEIGHT = viewSize.height;
   const hasUnsavedChanges = config !== null && savedConfig !== null && JSON.stringify(config) !== JSON.stringify(savedConfig);
+
+  useEffect(() => {
+    const prev = prevViewStateRef.current;
+    const next = { active, sourceKey };
+    prevViewStateRef.current = next;
+    const decision = shouldRefreshRoiPreview(prev, next, autoPreviewUrlRef.current !== null);
+    if (decision.clearAutoPreview) {
+      setAutoPreviewUrl(null);
+      setAutoWarnings([]);
+    }
+    if (decision.refreshPreview) {
+      setPreviewKey(current => Math.max(Date.now(), current + 1));
+    }
+  }, [active, sourceKey]);
 
   const handleImageLoad = (event: SyntheticEvent<HTMLImageElement>) => {
     const image = event.currentTarget;
@@ -790,7 +822,7 @@ export function RoiEditor({
   const getLoupeStyle = (): React.CSSProperties => {
     const bgSrc =
       useLiveStream && active
-        ? '/api/camera/stream?annotated=false'
+        ? `/api/camera/stream?annotated=false&t=${previewKey}`
         : (autoPreviewUrl ?? `/api/calibration/preview?t=${previewKey}`);
     return {
       backgroundImage: `url(${bgSrc})`,
@@ -1012,7 +1044,7 @@ export function RoiEditor({
         <div className="roi-viewport">
           {useLiveStream && active ? (
             <img
-              src="/api/camera/stream?annotated=false"
+              src={`/api/camera/stream?annotated=false&t=${previewKey}`}
               alt="Camera Stream Live"
               onLoad={handleImageLoad}
               className="roi-bg-img"

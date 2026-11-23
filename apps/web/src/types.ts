@@ -23,7 +23,7 @@ export type UnbilledAlert = {
 export type Snapshot = {
   type: 'snapshot'; server_time: string; timezone: string; mode: string;
   simulation_enabled: boolean; auto_open_enabled: boolean; camera_ready: boolean;
-  camera_status?: string;
+  camera_status?: string; camera_source?: string;
   model_status: {
     person: { name: string; loaded: boolean; backend: string };
     cue: { name: string; loaded: boolean; backend: string; validated: boolean };

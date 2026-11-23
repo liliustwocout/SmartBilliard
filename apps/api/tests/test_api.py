@@ -701,3 +701,25 @@ def test_auto_roi_requires_real_frame_and_never_saves_proposals(tmp_path, monkey
             assert again.status_code == 200
             assert zones_path.read_bytes() == original_bytes
             assert client.get("/api/calibration/zones").json()["config"] == result["config"]
+
+
+def test_dashboard_snapshot_exposes_sanitized_camera_source(tmp_path):
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'camera_source.db'}",
+        camera_source="rtsp://user:secret@127.0.0.1:554/stream",
+    )
+    with TestClient(create_app(settings, Clock()), base_url="http://127.0.0.1") as client:
+        snap = client.get("/api/dashboard").json()
+        assert "camera_source" in snap
+        assert "secret" not in snap["camera_source"]
+        assert "***" in snap["camera_source"]
+        assert "127.0.0.1:554/stream" in snap["camera_source"]
+
+        updated = client.post("/api/settings", json={"camera_source": "demo_match.mp4"})
+        assert updated.status_code == 200, updated.text
+        assert client.get("/api/dashboard").json()["camera_source"] == "demo_match.mp4"
+
+        reset = client.post("/api/settings/reset")
+        assert reset.status_code == 200, reset.text
+        restored = client.get("/api/dashboard").json()["camera_source"]
+        assert "secret" not in restored and "127.0.0.1:554/stream" in restored

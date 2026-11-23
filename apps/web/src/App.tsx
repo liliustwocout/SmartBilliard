@@ -341,6 +341,7 @@ export default function App() {
                 <RoiEditor
                   tableCount={data.tables.length}
                   active={tab === 'calibration'}
+                  sourceKey={`${data.camera_source ?? ''}|${data.mode}|${data.camera_ready ? '1' : '0'}`}
                   onSaved={() => setNotice('Cấu hình ROI đã được lưu và cập nhật.')}
                 />
               </div>
