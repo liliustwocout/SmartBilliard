@@ -90,16 +90,23 @@ def create_app(settings: Settings | None = None,
     def sqlite_setup(connection, _):
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA busy_timeout=5000")
+        try:
+            connection.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            pass
 
     lock = asyncio.Lock()
     clients: set[asyncio.Queue] = set()
+    main_loop: asyncio.AbstractEventLoop | None = None
 
     def process_observation(db, table_id: int, event_id: str, present: bool,
                             confidence: float, ambiguous: bool, source: str,
                             cue_confidence: float | None = None,
                             normalized_payload: dict | None = None,
                             now: datetime | None = None,
-                            activity_state: str | None = None):
+                            activity_state: str | None = None,
+                            felt_motion: bool = False,
+                            sides_visited: int = 1):
         now = now or utc(clock())
         table = require_table(db, table_id)
         previous = db.get(DetectionEvent, str(event_id))
@@ -107,6 +114,7 @@ def create_app(settings: Settings | None = None,
             "event_id": str(event_id), "table_id": table_id, "present": present,
             "confidence": confidence, "ambiguous": ambiguous,
             "cue_confidence": cue_confidence, "source": source,
+            "felt_motion": felt_motion, "sides_visited": sides_visited,
         }
         if previous:
             if previous.payload != normalized:
@@ -119,6 +127,8 @@ def create_app(settings: Settings | None = None,
             present=present, confidence=confidence,
             ambiguous=ambiguous, cue_confidence=cue_confidence,
             activity_state=activity_state,
+            felt_motion=felt_motion,
+            sides_visited=sides_visited,
         ), now.timestamp(), settings.decision, active=current is not None,
             auto_open=settings.auto_open, cue_detector_ready=cue_ready)
         table.memory = asdict(decision.memory)
@@ -160,8 +170,12 @@ def create_app(settings: Settings | None = None,
                         "people_count": summary.people_count,
                         "activity_state": summary.activity_state,
                         "activity_reason": summary.activity_reason,
+                        "felt_motion": summary.felt_motion,
+                        "sides_visited": summary.sides_visited,
                     },
                     activity_state=summary.activity_state,
+                    felt_motion=summary.felt_motion,
+                    sides_visited=summary.sides_visited,
                 )
                 db.commit()
                 if result["state"] == "ACTIVE":
@@ -184,6 +198,8 @@ def create_app(settings: Settings | None = None,
 
     @asynccontextmanager
     async def lifespan(_app):
+        nonlocal main_loop
+        main_loop = asyncio.get_running_loop()
         Base.metadata.create_all(engine)
         # create_all does not add new indexes to tables that already exist.
         LATEST_DETECTION_EVENTS_INDEX.create(engine, checkfirst=True)
@@ -218,9 +234,26 @@ def create_app(settings: Settings | None = None,
         return await call_next(request)
 
     def changed():
-        for queue in tuple(clients):
-            if queue.empty():
-                queue.put_nowait(True)
+        nonlocal main_loop
+        if main_loop is not None and not main_loop.is_closed():
+            def _notify():
+                for queue in tuple(clients):
+                    if queue.empty():
+                        try:
+                            queue.put_nowait(True)
+                        except Exception:
+                            pass
+            try:
+                main_loop.call_soon_threadsafe(_notify)
+            except RuntimeError:
+                pass
+        else:
+            for queue in tuple(clients):
+                if queue.empty():
+                    try:
+                        queue.put_nowait(True)
+                    except Exception:
+                        pass
 
     def require_table(db, table_id):
         table = db.get(Table, table_id)
@@ -435,6 +468,8 @@ def create_app(settings: Settings | None = None,
                     payload.present, payload.confidence, payload.ambiguous,
                     "SIMULATED", payload.cue_confidence, payload.model_dump(mode="json"),
                     activity_state=payload.activity_state,
+                    felt_motion=payload.felt_motion,
+                    sides_visited=payload.sides_visited,
                 )
                 db.commit()
                 if result["state"] == "ACTIVE":
@@ -451,6 +486,8 @@ def create_app(settings: Settings | None = None,
                     payload.present, payload.confidence, payload.ambiguous,
                     payload.source, payload.cue_confidence, payload.model_dump(mode="json"),
                     activity_state=payload.activity_state,
+                    felt_motion=payload.felt_motion,
+                    sides_visited=payload.sides_visited,
                 )
                 db.commit()
                 if result["state"] == "ACTIVE":
@@ -651,8 +688,14 @@ def create_app(settings: Settings | None = None,
         if frame is None:
             raise HTTPException(409, "Chưa có khung hình camera để nhận diện bàn.")
         try:
-            result = await asyncio.to_thread(propose_table_zones, frame, payload,
-                                             settings.table_count, settings.auto_roi)
+            result = await asyncio.to_thread(
+                propose_table_zones,
+                frame,
+                payload,
+                settings.table_count,
+                settings.auto_roi,
+                model_path=ROOT / "models/yolov8n-table-seg.onnx",
+            )
         except ValueError as err:
             raise HTTPException(422, str(err)) from err
         return {**result, "captured_at": iso(clock())}
@@ -847,9 +890,17 @@ def create_app(settings: Settings | None = None,
         clients.add(queue)
         try:
             while True:
-                async with lock:
-                    data = snapshot()
-                await socket.send_json(data)
+                try:
+                    async with lock:
+                        data = snapshot()
+                    await socket.send_json(data)
+                except (WebSocketDisconnect, OSError):
+                    break
+                except Exception as ex:
+                    logger.warning("WebSocket snapshot error: %s", ex)
+                    await asyncio.sleep(0.5)
+                    continue
+
                 try:
                     await asyncio.wait_for(queue.get(), timeout=1)
                 except asyncio.TimeoutError:

@@ -3,6 +3,7 @@ import type { Snapshot } from '../types';
 
 export type LiveViewProps = {
   data: Snapshot;
+  active?: boolean;
   locked: boolean;
   onStartCamera: () => void;
   onStopCamera: () => void;
@@ -13,6 +14,7 @@ export type LiveViewProps = {
 
 export function LiveView({
   data,
+  active = true,
   locked,
   onStartCamera,
   onStopCamera,
@@ -45,20 +47,26 @@ export function LiveView({
       <section className="live-camera-panel">
       <div className="live-main-column">
         <div className="live-stream-frame">
-          <img
-            src="/api/camera/stream"
-            alt="Luồng Camera AI Trực tiếp"
-            className="live-stream-img"
-          />
+          {active ? (
+            <img
+              src="/api/camera/stream"
+              alt="Luồng Camera AI Trực tiếp"
+              className="live-stream-img"
+            />
+          ) : (
+            <div className="live-stream-placeholder">
+              <p>Luồng video tạm dừng khi chuyển tab để tối ưu hiệu năng</p>
+            </div>
+          )}
         </div>
 
         <div className="live-card">
-          <p className="live-legend-title">CHÚ GIẢI TRỰC QUAN</p>
+          <p className="live-legend-title">CHÚ GIẢI TRỰC QUAN & TÍN HIỆU THÔNG MINH</p>
           <ul className="live-legend-list">
-            <li><strong className="legend-green">Khung xanh lá + Xương:</strong> Người chơi đã được gán vào bàn.</li>
-            <li><strong className="legend-amber">Khung cam / vàng:</strong> Người đứng ngoài bàn, vị trí tranh chấp (AMBIGUOUS) hoặc gậy bi-a.</li>
-            <li><strong className="legend-red">Chấm đỏ viền trắng:</strong> Điểm chân đứng (Foot Anchor) dùng để gán bàn.</li>
-            <li><strong className="legend-blue">Vùng viền bàn:</strong> Vùng mặt nỉ (Play) và vùng đứng đánh (Standing).</li>
+            <li><strong className="legend-green">Khung xanh lá + Xương:</strong> Người chơi [CHOI] (tư thế ngắm bi, gậy, hoặc di chuyển đa góc).</li>
+            <li><strong className="legend-amber">Khung xám / cam:</strong> Đang dọn bàn [DON BAN] hoặc đứng xem [XEM] — không kích hoạt tính giờ.</li>
+            <li><strong className="legend-green">Viền bàn sáng Cyan:</strong> Phát hiện bóng lăn (Felt Motion) trên mặt nỉ bằng frame differencing.</li>
+            <li><strong className="legend-red">Chấm đỏ viền trắng:</strong> Điểm chân đứng (Foot Anchor) gán bàn và theo dõi quỹ đạo di chuyển.</li>
           </ul>
         </div>
       </div>
@@ -81,6 +89,8 @@ export function LiveView({
           <dl className="system-grid live-status-grid">
             <div><dt>Trạng thái</dt><dd><b>{data.camera_status ?? '—'}</b></dd></div>
             <div><dt>Chế độ nguồn</dt><dd>{data.mode}</dd></div>
+            <div><dt>Chính sách AI</dt><dd><b>{data.decision_config.policy}</b></dd></div>
+            <div><dt>Cảm biến mặt nỉ</dt><dd>Felt Motion (differencing)</dd></div>
             <div><dt>Đầu vào model</dt><dd>640 × 640 (khi model được nạp)</dd></div>
             <div>
               <dt>Model người</dt>

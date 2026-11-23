@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 class DecisionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    policy: Literal["PERSON_ONLY", "PERSON_AND_CUE", "POSE_AND_CUE"] = "PERSON_ONLY"
+    policy: Literal["PERSON_ONLY", "PERSON_AND_CUE", "POSE_AND_CUE", "SMART_STANCE"] = "PERSON_ONLY"
     presence_seconds: float = Field(default=8, gt=0, le=600)
     confidence_enter: float = Field(default=.75, ge=0, le=1)
     confidence_exit: float = Field(default=.55, ge=0, le=1)
@@ -32,6 +32,9 @@ class Observation:
     ambiguous: bool = False
     cue_confidence: float | None = None
     activity_state: Literal["PLAYING", "NOT_PLAYING", "UNKNOWN"] | None = None
+    felt_motion: bool = False
+    sides_visited: int = 1
+
 
 
 @dataclass(frozen=True)
@@ -101,12 +104,24 @@ def advance(memory: Memory, observation: Observation, now: float,
     threshold = config.confidence_enter if memory.state in ("EMPTY", "CLOSED") else config.confidence_exit
     base_positive = observation.present and not observation.ambiguous and observation.confidence >= threshold
 
-    if observation.activity_state == "NOT_PLAYING":
+    if observation.activity_state == "NOT_PLAYING" and not observation.felt_motion:
         positive = False
         reason = "NOT_PLAYING_POSTURE"
-    elif config.policy == "POSE_AND_CUE" and observation.activity_state != "PLAYING":
+    elif config.policy == "POSE_AND_CUE" and observation.activity_state != "PLAYING" and not observation.felt_motion:
         positive = False
         reason = "AMBIGUOUS" if observation.ambiguous else "NO_RELIABLE_PRESENCE"
+    elif config.policy == "SMART_STANCE":
+        has_smart_play = (
+            observation.activity_state == "PLAYING"
+            or observation.felt_motion
+            or observation.sides_visited >= 2
+        )
+        if not has_smart_play or (observation.activity_state == "NOT_PLAYING" and not observation.felt_motion):
+            positive = False
+            reason = "NOT_PLAYING_POSTURE" if observation.activity_state == "NOT_PLAYING" else "SPECTATOR_OR_IDLE"
+        else:
+            positive = base_positive
+            reason = "AMBIGUOUS" if observation.ambiguous else "NO_RELIABLE_PRESENCE"
     else:
         positive = base_positive
         reason = "AMBIGUOUS" if observation.ambiguous else "NO_RELIABLE_PRESENCE"
@@ -125,7 +140,7 @@ def advance(memory: Memory, observation: Observation, now: float,
                 ),
                 reason=held_reason,
             )
-        if observation.activity_state == "NOT_PLAYING":
+        if observation.activity_state == "NOT_PLAYING" and not observation.felt_motion:
             return Decision(
                 Memory(cooldown_until=memory.cooldown_until, last_seen=now, activity_state="NOT_PLAYING"),
                 reason="NOT_PLAYING_POSTURE",

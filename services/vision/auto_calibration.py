@@ -1,18 +1,229 @@
-"""Propose table cloth quadrilaterals and surrounding zones from a real frame.
+"""Automatic Table ROI Detection & Unsaved Proposal Engine.
 
-Uses colour and contour geometry, not a learned table detector. Proposals never
-save calibration or change sessions. Covered/occluded tables can be missed.
+Combines YOLOv8-seg table felt inference (when ONNX weights exist) with local
+OpenCV cloth/contour geometry (`AutoRoiConfig`), plus symmetric standing-zone
+estimation and clockwise 4-corner ordering. Proposals never auto-save calibration.
 """
 from __future__ import annotations
 
 import base64
-from typing import Any
+import math
+from pathlib import Path
+from typing import Any, Sequence
 
 import cv2
 import numpy as np
 
 from services.vision.auto_roi_config import AutoRoiConfig
-from services.vision.calibration import CalibrationConfig, TableZone
+from services.vision.calibration import (
+    CalibrationConfig,
+    Point,
+    Polygon,
+    TableZone,
+    is_self_intersecting,
+    point_in_polygon,
+    polygon_area,
+    polygons_overlap,
+)
+
+
+def _order_points_clockwise(pts: np.ndarray) -> list[Point]:
+    """Order 4 (x, y) points in clockwise order starting from top-left."""
+    pts = np.asarray(pts, dtype=np.float32)
+    if len(pts) != 4:
+        return [(round(float(p[0]), 4), round(float(p[1]), 4)) for p in pts]
+
+    cx = float(np.mean(pts[:, 0]))
+    cy = float(np.mean(pts[:, 1]))
+    angles = np.arctan2(pts[:, 1] - cy, pts[:, 0] - cx)
+    sort_idx = np.argsort(angles)
+    pts_sorted = pts[sort_idx]
+
+    # Find the vertex closest to top-left (min sum x + y)
+    sums = pts_sorted[:, 0] + pts_sorted[:, 1]
+    tl_idx = int(np.argmin(sums))
+    ordered = np.roll(pts_sorted, -tl_idx, axis=0)
+
+    return [(round(float(p[0]), 4), round(float(p[1]), 4)) for p in ordered]
+
+
+def generate_standing_polygon(
+    play_polygon: Polygon,
+    other_standing: Sequence[Polygon] = (),
+    scale: float = 1.30,
+) -> Polygon:
+    """Generate an expanded standing polygon around play_polygon avoiding overlaps.
+
+    Applies perspective-aware expansion (bottom edges near camera expand slightly more
+    than top edges far from camera) and checks candidate scale buffers.
+    """
+    if len(play_polygon) < 3:
+        return list(play_polygon)
+
+    cx = sum(p[0] for p in play_polygon) / len(play_polygon)
+    cy = sum(p[1] for p in play_polygon) / len(play_polygon)
+
+    candidate_scales = [scale, 1.25, 1.20, 1.15, 1.10, 1.05]
+    for s in candidate_scales:
+        scaled: list[Point] = []
+        for px, py in play_polygon:
+            # Perspective compensation: points lower in the frame (larger y) expand slightly more
+            persp_factor = 1.0 + (py - cy) * 0.15
+            dx = (px - cx) * s * max(0.9, min(1.2, persp_factor))
+            dy = (py - cy) * s * max(0.9, min(1.2, persp_factor))
+            scaled.append(
+                (
+                    max(0.005, min(0.995, round(cx + dx, 4))),
+                    max(0.005, min(0.995, round(cy + dy, 4))),
+                )
+            )
+
+        # Check if overlapping with any existing standing polygon
+        if not any(polygons_overlap(scaled, other) for other in other_standing):
+            return scaled
+
+    # Fallback to minimal expansion
+    return [
+        (
+            max(0.005, min(0.995, round(cx + (px - cx) * 1.05, 4))),
+            max(0.005, min(0.995, round(cy + (py - cy) * 1.05, 4))),
+        )
+        for px, py in play_polygon
+    ]
+
+
+def auto_detect_table_zones(
+    frame: np.ndarray,
+    max_tables: int = 8,
+    min_area_ratio: float = 0.006,
+    max_area_ratio: float = 0.70,
+) -> list[TableZone]:
+    """Automatically detect billiard tables in a BGR frame and return calibrated TableZone objects.
+
+    Supports green, blue, red, and modern grey felt cloths, with morphological highlight bridging
+    and convex-hull quadrilateral fitting.
+
+    Args:
+        frame: Input BGR image.
+        max_tables: Maximum number of tables to detect (default: 8).
+        min_area_ratio: Minimum ratio of contour area over frame area (default: 0.6%).
+        max_area_ratio: Maximum ratio of contour area over frame area (default: 70%).
+
+    Returns:
+        List of detected and ordered TableZone configurations.
+    """
+    if frame is None or frame.size == 0:
+        return []
+
+    h, w = frame.shape[:2]
+    total_area = float(w * h)
+    min_area = total_area * min_area_ratio
+    max_area = total_area * max_area_ratio
+
+    # 1. Convert to HSV
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+    # 2. Threshold for typical billiard felt cloth colors:
+    # Green felt (traditional tournament/pool cloth)
+    mask_green = cv2.inRange(hsv, np.array([28, 25, 20]), np.array([92, 255, 255]))
+    # Blue felt (Simonis tournament blue cloth)
+    mask_blue = cv2.inRange(hsv, np.array([88, 30, 20]), np.array([138, 255, 255]))
+    # Red/Burgundy felt (Carom/snooker burgundy cloth)
+    mask_red1 = cv2.inRange(hsv, np.array([0, 35, 25]), np.array([14, 255, 255]))
+    mask_red2 = cv2.inRange(hsv, np.array([166, 35, 25]), np.array([180, 255, 255]))
+    mask_red = cv2.bitwise_or(mask_red1, mask_red2)
+
+    cloth_colored = cv2.bitwise_or(mask_green, cv2.bitwise_or(mask_blue, mask_red))
+
+    # Morphological kernels for bridging holes (balls, cues, lamp specular highlights)
+    close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (17, 17))
+    open_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+
+    def _extract_candidates_from_mask(mask: np.ndarray) -> list[tuple[float, float, Polygon]]:
+        closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_kernel)
+        cleaned = cv2.morphologyEx(closed, cv2.MORPH_OPEN, open_kernel)
+        contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        found: list[tuple[float, float, Polygon]] = []
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < min_area or area > max_area:
+                continue
+
+            # Compute Convex Hull to smooth out pocket indentations and cue stick occlusions
+            hull = cv2.convexHull(cnt)
+            peri = cv2.arcLength(hull, True)
+            pts_px: np.ndarray | None = None
+
+            # Try multiple precision levels to find cleanest 4-point quadrilateral
+            for eps_factor in [0.035, 0.045, 0.025, 0.055, 0.015, 0.07]:
+                approx = cv2.approxPolyDP(hull, eps_factor * peri, True)
+                if len(approx) == 4 and cv2.isContourConvex(approx):
+                    pts_px = approx.reshape(4, 2)
+                    break
+
+            if pts_px is None:
+                # Fall back to oriented minimum area bounding box
+                rect = cv2.minAreaRect(hull)
+                pts_px = cv2.boxPoints(rect)
+
+            # Aspect ratio check (length / width between 1.05 and 3.6)
+            d1 = math.hypot(pts_px[0][0] - pts_px[1][0], pts_px[0][1] - pts_px[1][1])
+            d2 = math.hypot(pts_px[1][0] - pts_px[2][0], pts_px[1][1] - pts_px[2][1])
+            if min(d1, d2) < 5:
+                continue
+            ratio = max(d1, d2) / max(1.0, min(d1, d2))
+            if ratio < 1.05 or ratio > 3.6:
+                continue
+
+            # Convert to normalized coordinates [0.0, 1.0]
+            norm_pts = np.zeros_like(pts_px, dtype=np.float32)
+            norm_pts[:, 0] = np.clip(pts_px[:, 0] / float(w), 0.001, 0.999)
+            norm_pts[:, 1] = np.clip(pts_px[:, 1] / float(h), 0.001, 0.999)
+
+            ordered_poly = _order_points_clockwise(norm_pts)
+            poly_area_val = polygon_area(ordered_poly)
+            if poly_area_val < 0.001 or is_self_intersecting(ordered_poly):
+                continue
+
+            cx = sum(p[0] for p in ordered_poly) / 4.0
+            cy = sum(p[1] for p in ordered_poly) / 4.0
+            found.append((cy, cx, ordered_poly))
+
+        return found
+
+    # First attempt: colored felt masks (green, blue, red)
+    candidates = _extract_candidates_from_mask(cloth_colored)
+
+    # Second attempt fallback: if no colored table found, check for modern grey / neutral cloth
+    if not candidates:
+        mask_grey = cv2.inRange(hsv, np.array([0, 0, 45]), np.array([180, 42, 225]))
+        candidates = _extract_candidates_from_mask(mask_grey)
+
+    # 5. Sort candidates in reading order: top-to-bottom, left-to-right (grid layout)
+    candidates.sort(key=lambda item: (round(item[0], 1), item[1]))
+
+    # Limit to max_tables
+    candidates = candidates[:max_tables]
+
+    # 6. Build TableZone objects with non-overlapping standing zones
+    table_zones: list[TableZone] = []
+    standing_list: list[Polygon] = []
+
+    for idx, (_, _, play_poly) in enumerate(candidates, start=1):
+        standing_poly = generate_standing_polygon(play_poly, standing_list)
+        standing_list.append(standing_poly)
+
+        table_zones.append(
+            TableZone(
+                table_id=idx,
+                enabled=True,
+                play_polygon=play_poly,
+                standing_polygon=standing_poly,
+            )
+        )
+
+    return table_zones
 
 
 def _cloth_contours(mask: np.ndarray, config: AutoRoiConfig) -> list[np.ndarray]:
@@ -128,13 +339,46 @@ def _polygon_iou(first: np.ndarray, second: list[list[float]]) -> float:
     return float(intersection / union) if union > 0 else 0.0
 
 
-def propose_table_zones(frame: np.ndarray, current: CalibrationConfig, table_count: int,
-                        config: AutoRoiConfig) -> dict[str, Any]:
+def propose_table_zones(
+    frame: np.ndarray,
+    current: CalibrationConfig,
+    table_count: int,
+    config: AutoRoiConfig,
+    model_path: Path | str | None = None,
+) -> dict[str, Any]:
     """Produce an unsaved proposal, preserving unmatched zones and existing IDs."""
-    surfaces = find_table_surfaces(frame, config)
-    pairs = sorted(((_polygon_iou(surface, table.play_polygon), index, table.table_id)
-                    for index, surface in enumerate(surfaces) for table in current.tables
-                    if table.table_id <= table_count), reverse=True)
+    if frame is None or frame.ndim != 3 or frame.shape[2] != 3 or frame.size == 0:
+        raise ValueError("Cần khung hình BGR hợp lệ để nhận diện bàn.")
+    surfaces: list[np.ndarray] = []
+    method = "opencv_cloth_contours_v1"
+    if model_path is not None:
+        from services.vision.table_segmenter import YoloTableSegmenter
+
+        segmenter = YoloTableSegmenter(model_path=model_path)
+        if segmenter.is_available:
+            yolo_zones = segmenter.segment_tables(
+                frame,
+                max_tables=table_count,
+                allow_fallback=False,
+            )
+            surfaces = [
+                np.array(z.play_polygon, dtype=np.float32)
+                for z in yolo_zones
+                if len(z.play_polygon) == 4
+            ]
+            if surfaces:
+                method = "YOLOv8-seg (Deep Learning)"
+    if not surfaces:
+        surfaces = find_table_surfaces(frame, config)
+    pairs = sorted(
+        (
+            (_polygon_iou(surface, table.play_polygon), index, table.table_id)
+            for index, surface in enumerate(surfaces)
+            for table in current.tables
+            if table.table_id <= table_count
+        ),
+        reverse=True,
+    )
     assigned: dict[int, int] = {}
     matched_ids: set[int] = set()
     for overlap, index, table_id in pairs:
@@ -170,12 +414,15 @@ def propose_table_zones(frame: np.ndarray, current: CalibrationConfig, table_cou
     ok, jpeg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
     if not ok:
         raise ValueError("Không thể tạo ảnh kiểm tra ROI.")
-    message = (f"Đã đề xuất ROI cho {len(updated_ids)} bàn. Kiểm tra, chỉnh nếu cần rồi bấm Lưu cấu hình ROI."
-               if updated_ids else "Chưa tìm thấy mặt bàn xanh lá/xanh dương đủ rõ. Thử khung hình ít che khuất hơn hoặc vẽ ROI thủ công.")
+    if updated_ids:
+        method_suffix = f" ({method})" if method == "YOLOv8-seg (Deep Learning)" else ""
+        message = f"Đã đề xuất ROI cho {len(updated_ids)} bàn{method_suffix}. Kiểm tra, chỉnh nếu cần rồi bấm Lưu cấu hình ROI."
+    else:
+        message = "Chưa tìm thấy mặt bàn xanh lá/xanh dương đủ rõ. Thử khung hình ít che khuất hơn hoặc vẽ ROI thủ công."
     return {
         "config": proposal.model_dump(),
         "overlaps": [item.model_dump() for item in proposal.detect_overlaps()],
-        "method": "opencv_cloth_contours_v1",
+        "method": method,
         "requires_review": True,
         "detected_count": len(surfaces),
         "updated_table_ids": sorted(updated_ids),

@@ -74,7 +74,7 @@ class CameraRunner:
         self._pipeline: VisionPipeline | None = None
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._jpeg_lock = threading.Lock()
         self._jpeg_cache: dict[bool, tuple[tuple[int, int], bytes]] = {}
         self._frame_sequence = 0

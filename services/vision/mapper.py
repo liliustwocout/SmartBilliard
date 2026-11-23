@@ -42,6 +42,10 @@ class TableObservationSummary:
     cue_confidence: float | None = None
     activity_state: ActivityState = "UNKNOWN"
     activity_reason: str = "WAITING"
+    felt_motion: bool = False
+    motion_energy: float = 0.0
+    sides_visited: int = 1
+    spatial_dispersion: float = 0.0
 
     def to_observation(self) -> Observation:
         """Convert to the Decision Engine's Observation contract."""
@@ -51,7 +55,10 @@ class TableObservationSummary:
             ambiguous=self.ambiguous,
             cue_confidence=self.cue_confidence,
             activity_state=self.activity_state,
+            felt_motion=self.felt_motion,
+            sides_visited=self.sides_visited,
         )
+
 
 
 class TableZoneMapper:
@@ -110,6 +117,7 @@ class TableZoneMapper:
         self,
         detections: list[Any],
         timestamp: float | None = None,
+        felt_results: dict[int, Any] | None = None,
     ) -> tuple[list[PersonAssignment], dict[int, TableObservationSummary]]:
         """Map all detections in a frame to tables and return per-table observation summaries."""
         person_detections = [d for d in detections if getattr(d, "kind", "person") == "person"]
@@ -142,9 +150,17 @@ class TableZoneMapper:
             tid = table.table_id
             unambig_list = table_unambiguous.get(tid, [])
             ambig_list = table_ambiguous.get(tid, [])
-            activity_state, cue_conf, activity_reason = self.analyzer.analyze_table(
-                table, unambig_list, ambig_list, cue_detections, ts
+
+            felt_res = felt_results.get(tid) if felt_results else None
+            has_felt_motion = getattr(felt_res, "has_motion", False) if felt_res else False
+            felt_energy = getattr(felt_res, "motion_energy", 0.0) if felt_res else 0.0
+
+            table_analysis = self.analyzer.analyze_table(
+                table, unambig_list, ambig_list, cue_detections, ts, felt_motion=has_felt_motion
             )
+            activity_state, cue_conf, activity_reason = table_analysis
+            sides_visited = getattr(table_analysis, "max_sides_visited", 1)
+            spatial_dispersion = getattr(table_analysis, "max_spatial_dispersion", 0.0)
 
             if unambig_list:
                 # We have at least one person clearly at this table
@@ -160,6 +176,10 @@ class TableZoneMapper:
                     cue_confidence=cue_conf,
                     activity_state=activity_state,
                     activity_reason=activity_reason,
+                    felt_motion=has_felt_motion,
+                    motion_energy=felt_energy,
+                    sides_visited=sides_visited,
+                    spatial_dispersion=spatial_dispersion,
                 )
             elif ambig_list:
                 # Only ambiguous people on border
@@ -175,6 +195,10 @@ class TableZoneMapper:
                     cue_confidence=cue_conf,
                     activity_state=activity_state,
                     activity_reason=activity_reason,
+                    felt_motion=has_felt_motion,
+                    motion_energy=felt_energy,
+                    sides_visited=sides_visited,
+                    spatial_dispersion=spatial_dispersion,
                 )
             else:
                 # No people at this table
@@ -188,6 +212,10 @@ class TableZoneMapper:
                     cue_confidence=None,
                     activity_state="NOT_PLAYING",
                     activity_reason="EMPTY_TABLE",
+                    felt_motion=has_felt_motion,
+                    motion_energy=felt_energy,
+                    sides_visited=1,
+                    spatial_dispersion=0.0,
                 )
 
         return assignments, summaries

@@ -219,3 +219,65 @@ def test_video_extract_and_evaluate_scripts_end_to_end(tmp_path: Path):
     assert report["processed_frames"] >= 10
     assert out_vid.exists() and out_vid.stat().st_size > 500
     assert 1 in report["tables"] and 2 in report["tables"]
+
+
+def test_pose_analyzer_multi_side_navigation(table_zone: CalibrationConfig):
+    mapper = TableZoneMapper(table_zone)
+    # Player moves from Left Rail (0.10, 0.45) to Foot Rail (0.30, 0.78)
+    positions = [
+        (0.10, 0.45),
+        (0.12, 0.46),
+        (0.20, 0.65),
+        (0.30, 0.78),
+    ]
+    for idx, (fx, fy) in enumerate(positions):
+        ts = idx * 0.4
+        person = Detection(
+            camera_id="cam-01",
+            timestamp=ts,
+            kind="person",
+            bbox=(fx - 0.04, fy - 0.4, fx + 0.04, fy),
+            confidence=0.91,
+            track_id=5,
+            foot_anchor=(fx, fy),
+        )
+        _, summaries = mapper.map_frame([person], timestamp=ts)
+
+    # After navigating multiple sides of the table
+    summary = summaries[1]
+    assert summary.activity_state == "PLAYING"
+    assert summary.activity_reason == "PLAYER_NAVIGATING"
+
+
+def test_pose_analyzer_felt_motion_confirms_playing(table_zone: CalibrationConfig):
+    table = table_zone.tables[0]
+    analyzer = PoseCueAnalyzer()
+
+    # Upright person with spectator posture
+    kps = _make_keypoints(
+        ls=(5, (0.10, 0.35, 0.9)),
+        rs=(6, (0.14, 0.35, 0.9)),
+        lh=(11, (0.10, 0.55, 0.9)),
+        rh=(12, (0.14, 0.55, 0.9)),
+    )
+    person = Detection(
+        camera_id="cam-01",
+        timestamp=1.0,
+        kind="person",
+        bbox=(0.08, 0.25, 0.16, 0.80),
+        confidence=0.90,
+        track_id=10,
+        foot_anchor=(0.12, 0.80),
+        keypoints=kps,
+    )
+    assign = mapper = MagicMock(detection=person)
+
+    # Without felt motion -> SPECTATOR_POSTURE
+    res_no_felt = analyzer.analyze_table(table, [assign], [], [], 1.0, felt_motion=False)
+    assert res_no_felt.activity_state == "NOT_PLAYING"
+
+    # With felt motion (ball moving) -> Confirms PLAYING
+    res_felt = analyzer.analyze_table(table, [assign], [], [], 1.0, felt_motion=True)
+    assert res_felt.activity_state == "PLAYING"
+    assert res_felt.activity_reason == "PLAYING_FELT_MOTION"
+

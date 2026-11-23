@@ -125,10 +125,11 @@ export type CalibrationResponse = {
   config: CalibrationConfig;
   overlaps: ZoneOverlapWarning[];
   message?: string;
+  detected_count?: number;
 };
 
 export type AutoCalibrationResponse = CalibrationResponse & {
-  method: 'opencv_cloth_contours_v1';
+  method: string;
   requires_review: true;
   detected_count: number;
   updated_table_ids: number[];
@@ -138,7 +139,7 @@ export type AutoCalibrationResponse = CalibrationResponse & {
 };
 
 export type DecisionSettings = {
-  policy: 'PERSON_ONLY' | 'PERSON_AND_CUE' | 'POSE_AND_CUE';
+  policy: 'PERSON_ONLY' | 'PERSON_AND_CUE' | 'POSE_AND_CUE' | 'SMART_STANCE';
   presence_seconds: number; confidence_enter: number; confidence_exit: number;
   max_observation_gap_seconds: number; absence_grace_seconds: number; cooldown_seconds: number;
   cue_confidence: number; unbilled_alert_seconds: number; playing_hold_grace_seconds: number;

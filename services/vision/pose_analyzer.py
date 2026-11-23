@@ -36,6 +36,26 @@ class PersonAnalysis:
     cleaning_motion: bool
     cue_confidence: float | None
     reason: str
+    sides_visited: int = 1
+    spatial_dispersion: float = 0.0
+
+
+@dataclass(frozen=True)
+class TableAnalysisResult:
+    activity_state: ActivityState
+    cue_confidence: float | None
+    activity_reason: str
+    max_sides_visited: int = 1
+    max_spatial_dispersion: float = 0.0
+
+    def __iter__(self):
+        yield self.activity_state
+        yield self.cue_confidence
+        yield self.activity_reason
+
+    def __getitem__(self, index: int):
+        return (self.activity_state, self.cue_confidence, self.activity_reason)[index]
+
 
 
 def _dist(a: Point, b: Point) -> float:
@@ -75,6 +95,28 @@ def point_to_polygon_distance(pt: Point, poly: Polygon) -> float:
         _point_to_segment_distance(pt, poly[i], poly[(i + 1) % len(poly)])
         for i in range(len(poly))
     )
+
+
+def _determine_table_side(point: Point, table: TableZone) -> str:
+    """Determine which side of the billiard table a point is closest to: HEAD, FOOT, LEFT_RAIL, or RIGHT_RAIL."""
+    poly = table.play_polygon if len(table.play_polygon) >= 3 else table.standing_polygon
+    if not poly:
+        return "UNKNOWN"
+    xs = [p[0] for p in poly]
+    ys = [p[1] for p in poly]
+    cx = (min(xs) + max(xs)) / 2.0
+    cy = (min(ys) + max(ys)) / 2.0
+    w = max(1e-4, max(xs) - min(xs))
+    h = max(1e-4, max(ys) - min(ys))
+
+    px, py = point
+    dx = (px - cx) / w
+    dy = (py - cy) / h
+
+    if abs(dx) > abs(dy):
+        return "LEFT_RAIL" if dx < 0 else "RIGHT_RAIL"
+    return "HEAD" if dy < 0 else "FOOT"
+
 
 
 def _cue_reaches_polygon(bbox: tuple[float, float, float, float], poly: Polygon, margin: float = 0.06) -> bool:
@@ -150,8 +192,8 @@ class PoseCueAnalyzer:
         self.hip_cleaning_speed = hip_cleaning_speed
         self.wrist_cleaning_speed = wrist_cleaning_speed
         self.track_ttl_seconds = track_ttl_seconds
-        # track_id -> deque of (timestamp, hip_mid, wrist_mid)
-        self._history: dict[int, deque[tuple[float, Point, Point | None]]] = {}
+        # track_id -> deque of (timestamp, hip_mid, wrist_mid, foot_anchor, side_label)
+        self._history: dict[int, deque[tuple[float, Point | None, Point | None, Point | None, str | None]]] = {}
         self._history_window = history_window
 
     def _prune_history(self, now: float) -> None:
@@ -168,37 +210,58 @@ class PoseCueAnalyzer:
         track_id: int | None,
         keypoints: tuple[Keypoint, ...] | None,
         timestamp: float,
-    ) -> tuple[float, float]:
-        """Record track kinematics and return (hip_speed, wrist_speed) in normalized units/sec."""
-        if track_id is None or keypoints is None:
-            return 0.0, 0.0
+        foot_anchor: Point | None = None,
+        side_label: str | None = None,
+    ) -> tuple[float, float, int, float]:
+        """Record track kinematics and trajectory history.
 
-        hip_mid = _midpoint(
-            _confident_kp(keypoints, LEFT_HIP),
-            _confident_kp(keypoints, RIGHT_HIP),
-        )
-        if hip_mid is None:
-            return 0.0, 0.0
+        Returns:
+            (hip_speed, wrist_speed, sides_visited, spatial_dispersion)
+        """
+        if track_id is None:
+            return 0.0, 0.0, 1, 0.0
 
-        lw = _confident_kp(keypoints, LEFT_WRIST)
-        rw = _confident_kp(keypoints, RIGHT_WRIST)
+        hip_mid = None
+        if keypoints is not None:
+            hip_mid = _midpoint(
+                _confident_kp(keypoints, LEFT_HIP),
+                _confident_kp(keypoints, RIGHT_HIP),
+            )
+
+        lw = _confident_kp(keypoints, LEFT_WRIST) if keypoints else None
+        rw = _confident_kp(keypoints, RIGHT_WRIST) if keypoints else None
         wrist_mid = _midpoint(lw, rw)
 
         hist = self._history.setdefault(track_id, deque(maxlen=self._history_window))
         if not hist or timestamp > hist[-1][0]:
-            hist.append((timestamp, hip_mid, wrist_mid))
+            hist.append((timestamp, hip_mid, wrist_mid, foot_anchor, side_label))
+
+        feet = [item[3] for item in hist if len(item) > 3 and item[3] is not None]
+        sides = {item[4] for item in hist if len(item) > 4 and item[4] is not None and item[4] != "UNKNOWN"}
+        sides_visited = max(1, len(sides))
+
+        spatial_dispersion = 0.0
+        if len(feet) >= 2:
+            xs = [f[0] for f in feet]
+            ys = [f[1] for f in feet]
+            spatial_dispersion = math.hypot(max(xs) - min(xs), max(ys) - min(ys))
 
         if len(hist) < 3:
-            return 0.0, 0.0
+            return 0.0, 0.0, sides_visited, spatial_dispersion
 
         dt = hist[-1][0] - hist[0][0]
         if dt < 0.25:
-            return 0.0, 0.0
+            return 0.0, 0.0, sides_visited, spatial_dispersion
 
-        hip_path = sum(_dist(hist[i - 1][1], hist[i][1]) for i in range(1, len(hist)))
-        hip_speed = hip_path / dt
+        hip_pts = [(item[0], item[1]) for item in hist if item[1] is not None]
+        hip_speed = 0.0
+        if len(hip_pts) >= 2:
+            h_dt = hip_pts[-1][0] - hip_pts[0][0]
+            if h_dt >= 0.2:
+                hip_path = sum(_dist(hip_pts[i - 1][1], hip_pts[i][1]) for i in range(1, len(hip_pts)))
+                hip_speed = hip_path / h_dt
 
-        wrist_pts = [(t, w) for t, _, w in hist if w is not None]
+        wrist_pts = [(item[0], item[2]) for item in hist if item[2] is not None]
         wrist_speed = 0.0
         if len(wrist_pts) >= 2:
             w_dt = wrist_pts[-1][0] - wrist_pts[0][0]
@@ -206,7 +269,7 @@ class PoseCueAnalyzer:
                 wrist_path = sum(_dist(wrist_pts[i - 1][1], wrist_pts[i][1]) for i in range(1, len(wrist_pts)))
                 wrist_speed = wrist_path / w_dt
 
-        return hip_speed, wrist_speed
+        return hip_speed, wrist_speed, sides_visited, spatial_dispersion
 
     def _match_active_cue(
         self,
@@ -325,10 +388,19 @@ class PoseCueAnalyzer:
         keypoints: tuple[Keypoint, ...] | None = getattr(det, "keypoints", None)
         track_id: int | None = getattr(det, "track_id", None)
 
+        foot_anchor = getattr(det, "foot_anchor", None)
+        if foot_anchor is None and hasattr(det, "bbox"):
+            x1, y1, x2, y2 = det.bbox
+            foot_anchor = ((x1 + x2) / 2.0, y2)
+
+        side_label = _determine_table_side(foot_anchor, table) if foot_anchor else "UNKNOWN"
+        hip_speed, wrist_speed, sides_visited, dispersion = self._update_motion_history(
+            track_id, keypoints, timestamp, foot_anchor=foot_anchor, side_label=side_label
+        )
+
         cue_conf = self._match_active_cue(det, keypoints, cue_detections, play_poly)
         has_active_cue = cue_conf is not None
         has_pose_signal, aiming = self._check_aiming_posture(det, keypoints, play_poly)
-        hip_speed, wrist_speed = self._update_motion_history(track_id, keypoints, timestamp)
 
         cleaning = (
             not has_active_cue
@@ -345,6 +417,8 @@ class PoseCueAnalyzer:
                 cleaning_motion=True,
                 cue_confidence=cue_conf,
                 reason="CLEANING_MOTION",
+                sides_visited=sides_visited,
+                spatial_dispersion=dispersion,
             )
 
         if has_active_cue or aiming:
@@ -356,6 +430,22 @@ class PoseCueAnalyzer:
                 cleaning_motion=False,
                 cue_confidence=cue_conf,
                 reason="PLAYING_ACTIVE",
+                sides_visited=sides_visited,
+                spatial_dispersion=dispersion,
+            )
+
+        # Player walking / maneuvering around table to line up shots
+        if sides_visited >= 2 and dispersion >= 0.08:
+            return PersonAnalysis(
+                track_id=track_id,
+                activity="PLAYING",
+                aiming_posture=False,
+                has_active_cue=False,
+                cleaning_motion=False,
+                cue_confidence=None,
+                reason="PLAYER_NAVIGATING",
+                sides_visited=sides_visited,
+                spatial_dispersion=dispersion,
             )
 
         if has_pose_signal:
@@ -367,6 +457,8 @@ class PoseCueAnalyzer:
                 cleaning_motion=False,
                 cue_confidence=None,
                 reason="SPECTATOR_POSTURE",
+                sides_visited=sides_visited,
+                spatial_dispersion=dispersion,
             )
 
         return PersonAnalysis(
@@ -377,6 +469,8 @@ class PoseCueAnalyzer:
             cleaning_motion=False,
             cue_confidence=None,
             reason="BBOX_ONLY",
+            sides_visited=sides_visited,
+            spatial_dispersion=dispersion,
         )
 
     def analyze_table(
@@ -386,28 +480,40 @@ class PoseCueAnalyzer:
         ambiguous_assignments: list[Any],
         cue_detections: list[Detection],
         timestamp: float,
-    ) -> tuple[ActivityState, float | None, str]:
-        """Aggregate person & cue evidence at one table into (activity_state, max_cue_conf, reason)."""
+        felt_motion: bool = False,
+    ) -> TableAnalysisResult:
+        """Aggregate person & cue evidence at one table into TableAnalysisResult."""
         self._prune_history(timestamp)
 
         if not unambiguous_assignments and not ambiguous_assignments:
-            return "NOT_PLAYING", None, "EMPTY_TABLE"
+            return TableAnalysisResult("NOT_PLAYING", None, "EMPTY_TABLE", 1, 0.0)
 
         if not unambiguous_assignments and ambiguous_assignments:
-            return "UNKNOWN", None, "AMBIGUOUS_ZONE"
+            return TableAnalysisResult("UNKNOWN", None, "AMBIGUOUS_ZONE", 1, 0.0)
 
         analyses = [
             self.analyze_person(assign.detection, table, cue_detections, timestamp)
             for assign in unambiguous_assignments
         ]
 
+        max_sides = max((a.sides_visited for a in analyses), default=1)
+        max_disp = max((a.spatial_dispersion for a in analyses), default=0.0)
+
         playing = [a for a in analyses if a.activity == "PLAYING"]
         if playing:
             cue_confs = [a.cue_confidence for a in playing if a.cue_confidence is not None]
-            return "PLAYING", (max(cue_confs) if cue_confs else None), "PLAYING_ACTIVE"
+            best_cue = max(cue_confs) if cue_confs else None
+            act_reasons = [a.reason for a in playing]
+            reason = "PLAYING_ACTIVE" if "PLAYING_ACTIVE" in act_reasons else "PLAYER_NAVIGATING"
+            return TableAnalysisResult("PLAYING", best_cue, reason, max_sides, max_disp)
+
+        if felt_motion and unambiguous_assignments:
+            cue_confs = [a.cue_confidence for a in analyses if a.cue_confidence is not None]
+            best_cue = max(cue_confs) if cue_confs else None
+            return TableAnalysisResult("PLAYING", best_cue, "PLAYING_FELT_MOTION", max_sides, max_disp)
 
         if any(a.activity == "NOT_PLAYING" for a in analyses) and not any(a.activity == "UNKNOWN" for a in analyses):
             reason = "CLEANING_MOTION" if any(a.cleaning_motion for a in analyses) else "SPECTATOR_OR_CLEANING"
-            return "NOT_PLAYING", None, reason
+            return TableAnalysisResult("NOT_PLAYING", None, reason, max_sides, max_disp)
 
-        return "UNKNOWN", None, "BBOX_ONLY"
+        return TableAnalysisResult("UNKNOWN", None, "BBOX_ONLY", max_sides, max_disp)

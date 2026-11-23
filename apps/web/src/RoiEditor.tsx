@@ -93,6 +93,61 @@ export function detectLocalOverlaps(tables: TableZoneConfig[]): ZoneOverlapWarni
   return warnings;
 }
 
+export function alignPerspectivePolygon(poly: Point2D[]): Point2D[] {
+  if (poly.length !== 4) return poly;
+  const [p0, p1, p2, p3] = poly;
+
+  const midTop: Point2D = [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2];
+  const midBottom: Point2D = [(p3[0] + p2[0]) / 2, (p3[1] + p2[1]) / 2];
+  const midLeft: Point2D = [(p0[0] + p3[0]) / 2, (p0[1] + p3[1]) / 2];
+  const midRight: Point2D = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2];
+
+  const lenTop = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
+  const lenBottom = Math.hypot(p2[0] - p3[0], p2[1] - p3[1]);
+  const lenLeft = Math.hypot(p3[0] - p0[0], p3[1] - p0[1]);
+  const lenRight = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
+
+  const isHorizontal = (lenTop + lenBottom) >= (lenLeft + lenRight);
+
+  if (isHorizontal) {
+    const axisV = [midBottom[0] - midTop[0], midBottom[1] - midTop[1]];
+    const axisLen = Math.hypot(axisV[0], axisV[1]) || 1;
+    // Normal vector pointing rightwards from vertical axis
+    const normX = axisV[1] / axisLen;
+    const normY = -axisV[0] / axisLen;
+
+    const avgTop = (lenTop + lenBottom * 0.9) / 2;
+    const avgBottom = (lenBottom + lenTop * 1.1) / 2;
+    const halfTop = avgTop / 2;
+    const halfBottom = avgBottom / 2;
+
+    return [
+      [clamp01(midTop[0] - normX * halfTop), clamp01(midTop[1] - normY * halfTop)],
+      [clamp01(midTop[0] + normX * halfTop), clamp01(midTop[1] + normY * halfTop)],
+      [clamp01(midBottom[0] + normX * halfBottom), clamp01(midBottom[1] + normY * halfBottom)],
+      [clamp01(midBottom[0] - normX * halfBottom), clamp01(midBottom[1] - normY * halfBottom)],
+    ];
+  } else {
+    const axisH = [midRight[0] - midLeft[0], midRight[1] - midLeft[1]];
+    const axisLen = Math.hypot(axisH[0], axisH[1]) || 1;
+    // Normal vector pointing downwards from horizontal axis
+    const normX = -axisH[1] / axisLen;
+    const normY = axisH[0] / axisLen;
+
+    const avgLeft = (lenLeft + lenRight * 0.9) / 2;
+    const avgRight = (lenRight + lenLeft * 1.1) / 2;
+    const halfLeft = avgLeft / 2;
+    const halfRight = avgRight / 2;
+
+    return [
+      [clamp01(midLeft[0] - normX * halfLeft), clamp01(midLeft[1] - normY * halfLeft)],
+      [clamp01(midRight[0] - normX * halfRight), clamp01(midRight[1] - normY * halfRight)],
+      [clamp01(midRight[0] + normX * halfRight), clamp01(midRight[1] + normY * halfRight)],
+      [clamp01(midLeft[0] + normX * halfLeft), clamp01(midLeft[1] + normY * halfLeft)],
+    ];
+  }
+}
+
 export function buildNonOverlappingStandingPolygon(
   playPolygon: Point2D[],
   otherStandingPolygons: Point2D[][],
@@ -101,12 +156,19 @@ export function buildNonOverlappingStandingPolygon(
   if (playPolygon.length < 3) return playPolygon;
   const cx = playPolygon.reduce((acc, p) => acc + p[0], 0) / playPolygon.length;
   const cy = playPolygon.reduce((acc, p) => acc + p[1], 0) / playPolygon.length;
-  const scaleSteps = [defaultScale, 1.28, 1.2, 1.14, 1.08, 1.03].filter((v, i, arr) => v >= 1.03 && arr.indexOf(v) === i);
+  const baseScale = Math.max(1.05, Math.min(1.8, defaultScale));
+  const scaleSteps = [baseScale, baseScale * 0.94, baseScale * 0.88, baseScale * 0.82, 1.12, 1.05, 1.03].filter(
+    (v, i, arr) => v >= 1.03 && arr.indexOf(v) === i,
+  );
 
-  const scalePt = (x: number, y: number, s: number): Point2D => [
-    clamp01(cx + (x - cx) * s),
-    clamp01(cy + (y - cy) * s),
-  ];
+  const scalePt = (x: number, y: number, s: number): Point2D => {
+    const persp = 1.0 + (y - cy) * 0.15;
+    const clampedS = 1.0 + (s - 1.0) * Math.max(0.85, Math.min(1.25, persp));
+    return [
+      clamp01(cx + (x - cx) * clampedS),
+      clamp01(cy + (y - cy) * clampedS),
+    ];
+  };
 
   const vertexScales = playPolygon.map(([x, y]) => {
     for (const s of scaleSteps) {
@@ -221,13 +283,22 @@ export function removeTableZoneFromConfig(config: CalibrationConfig, tableId: nu
   };
 }
 
+const CORNER_NAMES = [
+  'Góc 1: Trên - Trái (Top-Left)',
+  'Góc 2: Trên - Phải (Top-Right)',
+  'Góc 3: Dưới - Phải (Bottom-Right)',
+  'Góc 4: Dưới - Trái (Bottom-Left)',
+];
+
 export function RoiEditor({
   tableCount = 4,
   initialResponse,
+  active = true,
   onSaved,
 }: {
   tableCount?: number;
   initialResponse?: CalibrationResponse;
+  active?: boolean;
   onSaved?: () => void;
 }) {
   const maxTables = Math.max(1, Math.min(8, tableCount));
@@ -248,9 +319,15 @@ export function RoiEditor({
   const [dragStartCoords, setDragStartCoords] = useState<Point2D | null>(null);
   const [syncStanding, setSyncStanding] = useState<boolean>(true);
   const [hideOtherTables, setHideOtherTables] = useState<boolean>(false);
+  const [autoDetecting, setAutoDetecting] = useState<boolean>(false);
+  const [loupeEnabled, setLoupeEnabled] = useState<boolean>(true);
+  const [cursorCoords, setCursorCoords] = useState<Point2D | null>(null);
   const [loading, setLoading] = useState<boolean>(!initialResponse);
+  const [isCornerMode, setIsCornerMode] = useState<boolean>(false);
+  const [cornerPoints, setCornerPoints] = useState<Point2D[]>([]);
+  const [standingMargin, setStandingMargin] = useState<number>(30);
+
   const [saving, setSaving] = useState<boolean>(false);
-  const [autoDetecting, setAutoDetecting] = useState(false);
   const [autoPreviewUrl, setAutoPreviewUrl] = useState<string | null>(null);
   const [autoWarnings, setAutoWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string>('');
@@ -299,14 +376,22 @@ export function RoiEditor({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedVertex !== null) {
+      if (e.key === 'Escape') {
+        if (isCornerMode) {
+          setIsCornerMode(false);
+          setCornerPoints([]);
+          setNotice('Đã hủy chế độ chấm 4 góc.');
+        } else if (selectedVertex !== null) {
+          setSelectedVertex(null);
+        }
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedVertex !== null) {
         e.preventDefault();
         deleteSelectedVertex();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedVertex, config, selectedTable, activeMode]);
+  }, [selectedVertex, config, selectedTable, activeMode, isCornerMode]);
 
   const currentTable: TableZoneConfig | undefined = config?.tables.find(t => t.table_id === selectedTable);
   const nextMissingId = config ? getNextUncalibratedTableId(config.tables, maxTables) : null;
@@ -380,6 +465,34 @@ export function RoiEditor({
   };
 
   const handleSvgClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (isCornerMode) {
+      const coords = getSvgCoordinates(e);
+      if (!coords) return;
+      const nextPoints = [...cornerPoints, coords];
+      if (nextPoints.length < 4) {
+        setCornerPoints(nextPoints);
+        setNotice(`Đã chọn ${CORNER_NAMES[nextPoints.length - 1]}. Hãy click tiếp: ${CORNER_NAMES[nextPoints.length]}`);
+      } else {
+        const finalPlay = nextPoints;
+        const otherStanding = config ? config.tables
+          .filter(t => t.table_id !== selectedTable && t.enabled)
+          .map(t => t.standing_polygon) : [];
+        const finalStanding = buildNonOverlappingStandingPolygon(finalPlay, otherStanding, 1 + standingMargin / 100);
+        const updated = config?.tables.map(t =>
+          t.table_id === selectedTable
+            ? { ...t, play_polygon: finalPlay, standing_polygon: finalStanding }
+            : t,
+        );
+        if (config && updated) {
+          setConfig({ ...config, tables: updated });
+        }
+        setIsCornerMode(false);
+        setCornerPoints([]);
+        setNotice(`🎯 Đã hoàn thành vẽ mặt nỉ 4 góc cho Bàn ${selectedTable}! Hãy kiểm tra và bấm 'Lưu cấu hình ROI'.`);
+      }
+      return;
+    }
+
     if (draggingIdx !== null || isTranslating || !currentTable) return;
 
     if (toolMode === 'add') {
@@ -410,16 +523,18 @@ export function RoiEditor({
   };
 
   const handleSvgMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    const coords = getSvgCoordinates(e);
+    if (coords) setCursorCoords(coords);
     if (!currentTable || !config) return;
 
     if (draggingIdx !== null) {
-      const coords = getSvgCoordinates(e);
       if (!coords) return;
       const currentPoints = [...getPoints(currentTable, activeMode)];
       currentPoints[draggingIdx] = coords;
       updatePoints(currentPoints);
       return;
     }
+
 
     if (isTranslating && dragStartCoords) {
       const currentCoords = getSvgCoordinates(e);
@@ -464,6 +579,12 @@ export function RoiEditor({
     setIsTranslating(false);
     setDragStartCoords(null);
   };
+
+  const handleSvgMouseLeave = () => {
+    setCursorCoords(null);
+    handleSvgMouseUp();
+  };
+
 
   const deleteSelectedVertex = () => {
     if (!currentTable || selectedVertex === null) return;
@@ -551,7 +672,7 @@ export function RoiEditor({
     setError('');
     setNotice('');
     try {
-      const result = await request<AutoCalibrationResponse>('/calibration/auto-detect', config, 15000);
+      const result = await request<AutoCalibrationResponse>('/calibration/auto-detect', config, 45000);
       if (configRef.current !== config) {
         setError('ROI đã thay đổi trong lúc nhận diện. Bấm Tự nhận diện bàn để thử lại trên bản đang chỉnh.');
         return;
@@ -575,6 +696,109 @@ export function RoiEditor({
     }
   };
 
+  const handleOptimizeStandingZones = () => {
+    if (!config) return;
+    const newTables: TableZoneConfig[] = [];
+    for (let i = 0; i < config.tables.length; i += 1) {
+      const current = config.tables[i];
+      const otherStandings = newTables
+        .map(t => t.standing_polygon)
+        .concat(config.tables.slice(i + 1).map(t => t.standing_polygon));
+      const optimizedStanding = buildNonOverlappingStandingPolygon(
+        current.play_polygon,
+        otherStandings,
+        1.28,
+      );
+      newTables.push({
+        ...current,
+        standing_polygon: optimizedStanding,
+      });
+    }
+    setConfig({ ...config, tables: newTables });
+    const localOvs = detectLocalOverlaps(newTables);
+    setOverlaps(localOvs);
+    setNotice(
+      localOvs.length === 0
+        ? 'Đã tự động tính toán lại vùng đứng cho tất cả các bàn (0 chồng lấn)!'
+        : `Đã tối ưu vùng đứng cho các bàn (còn ${localOvs.length} vị trí chồng lấn).`,
+    );
+  };
+
+  const handleStartCornerMode = () => {
+    if (!currentTable) return;
+    setIsCornerMode(true);
+    setCornerPoints([]);
+    setSelectedVertex(null);
+    setIsTranslating(false);
+    setDraggingIdx(null);
+    setDragStartCoords(null);
+    setActiveMode('play');
+    setNotice('Chế độ chấm 4 góc đang bật: Hãy click lần lượt 4 góc mép nỉ (1. Trên-Trái, 2. Trên-Phải, 3. Dưới-Phải, 4. Dưới-Trái). Bấm ESC để hủy.');
+  };
+
+  const handleStandingMarginChange = (margin: number) => {
+    setStandingMargin(margin);
+    if (!currentTable || !config) return;
+    const play = currentTable.play_polygon;
+    const otherStanding = config.tables
+      .filter(t => t.table_id !== selectedTable && t.enabled)
+      .map(t => t.standing_polygon);
+    const newStanding = buildNonOverlappingStandingPolygon(play, otherStanding, 1 + margin / 100);
+    const updated = config.tables.map(t =>
+      t.table_id === selectedTable ? { ...t, standing_polygon: newStanding } : t,
+    );
+    setConfig({ ...config, tables: updated });
+  };
+
+  const handleAlignPerspective = () => {
+    if (!currentTable || !config) return;
+    let poly = currentTable.play_polygon;
+    if (poly.length !== 4) {
+      if (poly.length < 3) {
+        setError('Cần ít nhất 3 đỉnh để căn chỉnh phối cảnh.');
+        return;
+      }
+      const xs = poly.map(p => p[0]);
+      const ys = poly.map(p => p[1]);
+      const minX = Math.min(...xs);
+      const maxX = Math.max(...xs);
+      const minY = Math.min(...ys);
+      const maxY = Math.max(...ys);
+      poly = [
+        [round3(minX), round3(minY)],
+        [round3(maxX), round3(minY)],
+        [round3(maxX), round3(maxY)],
+        [round3(minX), round3(maxY)],
+      ];
+    }
+    const alignedPlay = alignPerspectivePolygon(poly);
+    const otherStanding = config.tables
+      .filter(t => t.table_id !== selectedTable)
+      .map(t => t.standing_polygon);
+    const alignedStanding = buildNonOverlappingStandingPolygon(alignedPlay, otherStanding, 1 + standingMargin / 100);
+
+    const updated = config.tables.map(t =>
+      t.table_id === selectedTable
+        ? { ...t, play_polygon: alignedPlay, standing_polygon: alignedStanding }
+        : t,
+    );
+    setConfig({ ...config, tables: updated });
+    setSelectedVertex(null);
+    setNotice(`Đã căn phẳng phối cảnh đối xứng cho Bàn ${selectedTable} (giữ nguyên độ nghiêng 3D của camera).`);
+  };
+
+  const getLoupeStyle = (): React.CSSProperties => {
+    const bgSrc =
+      useLiveStream && active
+        ? '/api/camera/stream?annotated=false'
+        : (autoPreviewUrl ?? `/api/calibration/preview?t=${previewKey}`);
+    return {
+      backgroundImage: `url(${bgSrc})`,
+      backgroundSize: `${VIEW_WIDTH * 3.5}px ${VIEW_HEIGHT * 3.5}px`,
+      backgroundPosition: `${-(cursorCoords?.[0] ?? 0.5) * VIEW_WIDTH * 3.5 + 70}px ${-(cursorCoords?.[1] ?? 0.5) * VIEW_HEIGHT * 3.5 + 70}px`,
+    };
+  };
+
   const handleSave = async () => {
     if (!config) return;
     setSaving(true);
@@ -596,7 +820,12 @@ export function RoiEditor({
   };
 
   if (loading) {
-    return <div className="detail-panel"><p>Đang tải dữ liệu hiệu chuẩn ROI…</p></div>;
+    return (
+      <div className="detail-panel roi-loading-panel">
+        <div className="spinner-lg" />
+        <p>Đang tải cấu hình ROI từ hệ thống…</p>
+      </div>
+    );
   }
 
   const activePoints = currentTable ? getPoints(currentTable, activeMode) : [];
@@ -613,12 +842,19 @@ export function RoiEditor({
         <div className="roi-header-actions">
           <button
             type="button"
-            className="button primary"
+            className="button roi-auto-detect-btn"
             disabled={autoDetecting || saving || !config}
             onClick={handleAutoDetect}
-            title="Phân tích màu mặt nỉ và đường biên từ khung hình camera/video hiện tại bằng OpenCV local"
+            title="Phân tích mặt nỉ và đường biên từ khung hình camera/video hiện tại bằng AI & OpenCV local"
           >
-            {autoDetecting ? 'Đang nhận diện bàn…' : 'Tự nhận diện bàn'}
+            {autoDetecting ? (
+              <>
+                <span className="spinner-sm" />
+                Đang nhận diện bàn…
+              </>
+            ) : (
+              '🪄 Tự nhận diện bàn'
+            )}
           </button>
           <button
             type="button"
@@ -645,7 +881,14 @@ export function RoiEditor({
             Chụp lại ảnh nền
           </button>
           <button type="button" className="button primary" disabled={saving || autoDetecting || !config} onClick={handleSave}>
-            {saving ? 'Đang lưu…' : 'Lưu cấu hình ROI'}
+            {saving ? (
+              <>
+                <span className="spinner-sm" />
+                Đang lưu…
+              </>
+            ) : (
+              'Lưu cấu hình ROI'
+            )}
           </button>
         </div>
       </div>
@@ -746,8 +989,28 @@ export function RoiEditor({
       </div>
 
       <div className="roi-layout">
+        {isCornerMode && (
+          <div className="roi-corner-banner" role="status" style={{ gridColumn: '1 / -1' }}>
+            <div className="roi-corner-banner-content">
+              <span className="roi-corner-badge">BƯỚC {cornerPoints.length + 1}/4</span>
+              <strong>{CORNER_NAMES[cornerPoints.length]}</strong>
+              <span className="roi-corner-hint">(Click chuột vào góc mép nỉ trên ảnh để định vị góc này)</span>
+            </div>
+            <button
+              type="button"
+              className="button subtle roi-corner-cancel-btn"
+              onClick={() => {
+                setIsCornerMode(false);
+                setCornerPoints([]);
+                setNotice('Đã hủy chế độ chấm 4 góc.');
+              }}
+            >
+              ✕ Hủy chấm góc (ESC)
+            </button>
+          </div>
+        )}
         <div className="roi-viewport">
-          {useLiveStream ? (
+          {useLiveStream && active ? (
             <img
               src="/api/camera/stream?annotated=false"
               alt="Camera Stream Live"
@@ -763,19 +1026,75 @@ export function RoiEditor({
             />
           )}
 
+          {autoDetecting && (
+            <div className="roi-ai-scan-overlay" role="status" aria-live="polite">
+              <div className="roi-ai-scan-beam" />
+              <div className="roi-ai-scan-badge">
+                <span className="spinner-sm" />
+                <span>AI YOLOv8-seg đang quét phân đoạn bàn bi-a…</span>
+              </div>
+            </div>
+          )}
+
           <svg
             ref={svgRef}
             viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
             preserveAspectRatio="none"
             className="roi-svg-layer"
             style={{
-              cursor: !currentTable ? 'default' : isTranslating ? 'grabbing' : toolMode === 'add' ? 'crosshair' : 'default',
+              cursor: isCornerMode ? 'crosshair' : !currentTable ? 'default' : isTranslating ? 'grabbing' : toolMode === 'add' ? 'crosshair' : 'default',
             }}
             onClick={handleSvgClick}
             onMouseMove={handleSvgMouseMove}
             onMouseUp={handleSvgMouseUp}
-            onMouseLeave={handleSvgMouseUp}
+            onMouseLeave={handleSvgMouseLeave}
           >
+            {isCornerMode && (
+              <g className="roi-corner-preview-group">
+                {cornerPoints.length >= 2 && (
+                  <polyline
+                    points={cornerPoints.map(([x, y]) => `${x * VIEW_WIDTH},${y * VIEW_HEIGHT}`).join(' ')}
+                    fill="none"
+                    stroke="#0284c7"
+                    strokeWidth={2.5}
+                  />
+                )}
+                {cornerPoints.length > 0 && cursorCoords && (
+                  <line
+                    x1={cornerPoints[cornerPoints.length - 1][0] * VIEW_WIDTH}
+                    y1={cornerPoints[cornerPoints.length - 1][1] * VIEW_HEIGHT}
+                    x2={cursorCoords[0] * VIEW_WIDTH}
+                    y2={cursorCoords[1] * VIEW_HEIGHT}
+                    stroke="#f59e0b"
+                    strokeWidth={2}
+                    strokeDasharray="4 4"
+                  />
+                )}
+                {cornerPoints.map(([x, y], idx) => (
+                  <g key={`corner-pt-${idx}`}>
+                    <circle
+                      cx={x * VIEW_WIDTH}
+                      cy={y * VIEW_HEIGHT}
+                      r={10}
+                      fill="#0284c7"
+                      stroke="#ffffff"
+                      strokeWidth={2.5}
+                    />
+                    <text
+                      x={x * VIEW_WIDTH}
+                      y={y * VIEW_HEIGHT + 4}
+                      fill="#ffffff"
+                      fontSize="11"
+                      fontWeight="bold"
+                      textAnchor="middle"
+                    >
+                      {idx + 1}
+                    </text>
+                  </g>
+                ))}
+              </g>
+            )}
+
             {!hideOtherTables &&
               config?.tables.map(table => {
                 if (table.table_id === selectedTable) return null;
@@ -783,7 +1102,15 @@ export function RoiEditor({
                 const standPts = table.standing_polygon.map(([x, y]) => `${x * VIEW_WIDTH},${y * VIEW_HEIGHT}`).join(' ');
                 const muted = !table.enabled;
                 return (
-                  <g key={table.table_id} opacity={muted ? 0.3 : 0.45} style={{ cursor: 'pointer' }} onClick={() => setSelectedTable(table.table_id)}>
+                  <g
+                    key={table.table_id}
+                    opacity={muted ? 0.3 : 0.45}
+                    style={{
+                      cursor: isCornerMode ? 'crosshair' : 'pointer',
+                      pointerEvents: isCornerMode ? 'none' : 'auto',
+                    }}
+                    onClick={() => !isCornerMode && setSelectedTable(table.table_id)}
+                  >
                     <polygon
                       points={standPts}
                       fill={muted ? '#94a3b8' : '#f59e0b'}
@@ -821,8 +1148,11 @@ export function RoiEditor({
                   stroke={currentTable.enabled ? '#f59e0b' : '#64748b'}
                   strokeWidth={activeMode === 'standing' ? 2.5 : 1}
                   strokeDasharray={activeMode === 'standing' && currentTable.enabled ? undefined : '4 4'}
-                  style={{ cursor: activeMode === 'standing' ? (isTranslating ? 'grabbing' : 'grab') : 'pointer' }}
-                  onMouseDown={activeMode === 'standing' ? handlePolygonMouseDown : undefined}
+                  style={{
+                    cursor: isCornerMode ? 'crosshair' : activeMode === 'standing' ? (isTranslating ? 'grabbing' : 'grab') : 'pointer',
+                    pointerEvents: isCornerMode ? 'none' : 'auto',
+                  }}
+                  onMouseDown={!isCornerMode && activeMode === 'standing' ? handlePolygonMouseDown : undefined}
                 />
 
                 <polygon
@@ -831,8 +1161,11 @@ export function RoiEditor({
                   fillOpacity={activeMode === 'play' ? 0.35 : 0.15}
                   stroke={currentTable.enabled ? '#10b981' : '#64748b'}
                   strokeWidth={activeMode === 'play' ? 3 : 1.5}
-                  style={{ cursor: activeMode === 'play' ? (isTranslating ? 'grabbing' : 'grab') : 'pointer' }}
-                  onMouseDown={activeMode === 'play' ? handlePolygonMouseDown : undefined}
+                  style={{
+                    cursor: isCornerMode ? 'crosshair' : activeMode === 'play' ? (isTranslating ? 'grabbing' : 'grab') : 'pointer',
+                    pointerEvents: isCornerMode ? 'none' : 'auto',
+                  }}
+                  onMouseDown={!isCornerMode && activeMode === 'play' ? handlePolygonMouseDown : undefined}
                 />
 
                 <text
@@ -849,52 +1182,66 @@ export function RoiEditor({
                   {isTranslating ? ' (Đang di chuyển…)' : ''}
                 </text>
 
-                {activePoints.map(([x, y], idx) => {
-                  const px = x * VIEW_WIDTH;
-                  const py = y * VIEW_HEIGHT;
-                  const isHovered = draggingIdx === idx;
-                  const isSelected = selectedVertex === idx;
-                  const color = !currentTable.enabled ? '#64748b' : activeMode === 'play' ? '#047857' : '#f59e0b';
-                  return (
-                    <g key={idx}>
-                      {isSelected && (
+                {!isCornerMode &&
+                  activePoints.map(([x, y], idx) => {
+                    const px = x * VIEW_WIDTH;
+                    const py = y * VIEW_HEIGHT;
+                    const isHovered = draggingIdx === idx;
+                    const isSelected = selectedVertex === idx;
+                    const color = !currentTable.enabled ? '#64748b' : activeMode === 'play' ? '#047857' : '#f59e0b';
+                    return (
+                      <g key={idx}>
+                        {isSelected && (
+                          <circle
+                            cx={px}
+                            cy={py}
+                            r={15}
+                            fill="none"
+                            stroke="#38bdf8"
+                            strokeWidth={2}
+                            strokeDasharray="3 3"
+                          />
+                        )}
                         <circle
                           cx={px}
                           cy={py}
-                          r={15}
-                          fill="none"
-                          stroke="#38bdf8"
-                          strokeWidth={2}
-                          strokeDasharray="3 3"
+                          r={isHovered ? 12 : 9}
+                          fill={color}
+                          stroke="#ffffff"
+                          strokeWidth={2.5}
+                          style={{ cursor: 'pointer', filter: 'drop-shadow(0px 2px 4px rgba(0,0,0,0.6))' }}
+                          onMouseDown={e => handleVertexMouseDown(e, idx)}
                         />
-                      )}
-                      <circle
-                        cx={px}
-                        cy={py}
-                        r={isHovered ? 12 : 9}
-                        fill={color}
-                        stroke="#ffffff"
-                        strokeWidth={2.5}
-                        style={{ cursor: 'pointer', filter: 'drop-shadow(0px 2px 4px rgba(0,0,0,0.6))' }}
-                        onMouseDown={e => handleVertexMouseDown(e, idx)}
-                      />
-                      <text
-                        x={px + 12}
-                        y={py + 5}
-                        fill="#ffffff"
-                        fontSize="12"
-                        fontWeight="bold"
-                        filter="drop-shadow(0px 1px 2px rgba(0,0,0,0.9))"
-                        style={{ pointerEvents: 'none' }}
-                      >
-                        {idx + 1}
-                      </text>
-                    </g>
-                  );
-                })}
+                        <text
+                          x={px + 12}
+                          y={py + 5}
+                          fill="#ffffff"
+                          fontSize="12"
+                          fontWeight="bold"
+                          filter="drop-shadow(0px 1px 2px rgba(0,0,0,0.9))"
+                          style={{ pointerEvents: 'none' }}
+                        >
+                          {idx + 1}
+                        </text>
+                      </g>
+                    );
+                  })}
               </g>
             )}
           </svg>
+
+          {loupeEnabled && cursorCoords && (
+            <div
+              className="roi-loupe"
+              style={getLoupeStyle()}
+            >
+              <div className="roi-loupe-crosshair-h" />
+              <div className="roi-loupe-crosshair-v" />
+              <div className="roi-loupe-coord">
+                X: {(cursorCoords[0] * 100).toFixed(1)}% | Y: {(cursorCoords[1] * 100).toFixed(1)}%
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="roi-controls">
@@ -984,11 +1331,54 @@ export function RoiEditor({
                     Kéo cả vùng đứng khi di chuyển mặt nỉ
                   </label>
                 )}
+                <label className="roi-check-label">
+                  <input
+                    type="checkbox"
+                    checked={loupeEnabled}
+                    onChange={e => setLoupeEnabled(e.target.checked)}
+                  />
+                  Bật kính lúp phóng đại góc (3.5×)
+                </label>
               </div>
 
               <div className="roi-card">
-                <p className="roi-card-title">CÔNG CỤ CĂN NHANH</p>
+                <p className="roi-card-title">CÔNG CỤ CĂN NHANH &amp; TỰ ĐỘNG HÓA</p>
                 <div className="roi-preset-stack">
+                  <button
+                    type="button"
+                    className={`button full-width ${isCornerMode ? 'primary' : 'roi-btn-highlight'}`}
+                    onClick={handleStartCornerMode}
+                    title="Click 4 lần vào 4 góc mép nỉ để vẽ lại hình bàn chuẩn theo góc phối cảnh"
+                  >
+                    {isCornerMode ? 'Đang chờ click 4 góc…' : '🎯 Chấm 4 góc vẽ lại bàn này'}
+                  </button>
+                  <button
+                    type="button"
+                    className="button subtle full-width"
+                    onClick={handleAlignPerspective}
+                    title="Căn phẳng đối xứng 4 góc bàn theo phối cảnh 3D (giữ nguyên độ nghiêng của camera)"
+                  >
+                    📐 Căn chuẩn phối cảnh (Perspective)
+                  </button>
+                  <div className="roi-slider-container">
+                    <div className="roi-slider-label">
+                      <span>Độ rộng vùng đứng:</span>
+                      <span>+{standingMargin}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={15}
+                      max={60}
+                      step={1}
+                      value={standingMargin}
+                      onChange={e => handleStandingMarginChange(Number(e.target.value))}
+                      className="roi-slider"
+                      title="Kéo để điều chỉnh khoảng cách vùng đứng xung quanh bàn"
+                    />
+                  </div>
+                  <button type="button" className="button subtle full-width" onClick={handleOptimizeStandingZones}>
+                    🛡️ Tối ưu toàn bộ vùng đứng (0 chồng lấn)
+                  </button>
                   <button type="button" className="button subtle full-width" onClick={createStandardRectangle}>
                     Tạo hình chữ nhật chuẩn (4 đỉnh)
                   </button>
@@ -1019,9 +1409,11 @@ export function RoiEditor({
           <div className="roi-card">
             <p className="roi-card-title">MẸO THAO TÁC TIỆN LỢI</p>
             <ul className="roi-tips-list">
+              <li><strong>Tự nhận diện bàn:</strong> Bấm nút <em>&ldquo;🪄 Tự nhận diện bàn&rdquo;</em> ở thanh trên cùng để AI tự quét đề xuất vùng bàn trên khung hình hiện tại.</li>
+              <li><strong>Kính lúp góc:</strong> Rê chuột vào góc bàn để xem phóng to 3.5× căn mép nỉ chuẩn từng pixel.</li>
               <li><strong>Di chuyển cả bàn:</strong> Bấm giữ chuột vào <em>lòng đa giác</em> rồi kéo rê.</li>
               <li><strong>Di chuyển đỉnh:</strong> Bấm giữ chuột vào <em>điểm tròn</em> rồi kéo.</li>
-              <li><strong>Tạo vùng đứng tránh chồng lấn:</strong> Căn mặt nỉ rồi bấm <em>&ldquo;Sinh vùng đứng bao quanh tự động&rdquo;</em>.</li>
+              <li><strong>Tối ưu vùng đứng:</strong> Bấm <em>&ldquo;Tối ưu toàn bộ vùng đứng&rdquo;</em> để tự động khử chồng lấn AMBIGUOUS.</li>
               <li><strong>Xóa đỉnh:</strong> Bấm vào đỉnh rồi nhấn phím <code>Delete</code> hoặc nút xóa.</li>
             </ul>
           </div>

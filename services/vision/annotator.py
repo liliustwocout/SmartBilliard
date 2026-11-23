@@ -110,9 +110,14 @@ def draw_frame_annotations(
                     [[int(x * width), int(y * height)] for x, y in table.play_polygon],
                     dtype=np.int32,
                 )
+                table_summary = summaries.get(table.table_id) if summaries else None
+                has_felt = bool(table_summary and getattr(table_summary, "felt_motion", False))
                 if not table.enabled:
                     play_fill = (95, 100, 105)
                     play_border = (135, 140, 145)
+                elif has_felt:
+                    play_fill = (35, 195, 80)
+                    play_border = (0, 255, 230)  # Cyan glowing border for rolling balls
                 else:
                     play_fill = (45, 180, 50) if is_active else (35, 120, 35)  # BGR
                     play_border = (80, 230, 90) if is_active else (55, 170, 60)
@@ -123,16 +128,24 @@ def draw_frame_annotations(
                 cx = int(np.mean(play_pts[:, 0]))
                 cy = int(np.mean(play_pts[:, 1]))
                 status_text = f"BAN {table.table_id:02}"
-                table_summary = summaries.get(table.table_id) if summaries else None
                 if not table.enabled:
                     sub_text = "TAM TAT"
                     label_color = (170, 175, 180)
                 elif table_summary and table_summary.activity_state == "PLAYING":
-                    sub_text = "DANG CHOI"
+                    if has_felt:
+                        sub_text = "CHOI (BONG LAN)"
+                    elif table_summary.activity_reason == "PLAYER_NAVIGATING":
+                        sub_text = "CHOI (DI CHUYEN)"
+                    else:
+                        sub_text = "DANG CHOI"
                     label_color = (100, 255, 120)
                 elif table_summary and table_summary.present and table_summary.activity_state == "NOT_PLAYING":
-                    sub_text = "KHONG CHOI"
-                    label_color = (255, 210, 120)
+                    if "CLEANING" in table_summary.activity_reason:
+                        sub_text = "DANG DON BAN"
+                        label_color = (190, 190, 190)
+                    else:
+                        sub_text = "DUNG XEM"
+                        label_color = (255, 210, 120)
                 elif is_active:
                     sub_text = "CHUA RO"
                     label_color = (240, 200, 100)
@@ -186,9 +199,27 @@ def draw_frame_annotations(
             tid = track_to_table.get(det.track_id) if det.track_id is not None else None
 
             # Color coding: Green for assigned table, Orange for ambiguous/outside
+            summary = summaries.get(tid) if (tid is not None and summaries) else None
+            act_suffix = ""
             if tid is not None:
-                box_color = (0, 230, 100)  # Green
-                tag_label = f"ID #{det.track_id} -> Ban {tid:02}"
+                if summary and summary.activity_state == "PLAYING":
+                    box_color = (0, 230, 100)  # Green
+                    if getattr(summary, "felt_motion", False):
+                        act_suffix = " [BONG LAN]"
+                    elif summary.activity_reason == "PLAYER_NAVIGATING":
+                        act_suffix = " [DI CHUYEN]"
+                    else:
+                        act_suffix = " [CHOI]"
+                elif summary and summary.activity_state == "NOT_PLAYING":
+                    if "CLEANING" in summary.activity_reason:
+                        box_color = (180, 180, 180)  # Silver/gray
+                        act_suffix = " [DON BAN]"
+                    else:
+                        box_color = (200, 200, 160)  # Slate
+                        act_suffix = " [XEM]"
+                else:
+                    box_color = (0, 230, 100)  # Green
+                tag_label = f"ID #{det.track_id} -> Ban {tid:02}{act_suffix}"
             else:
                 box_color = (60, 180, 245)  # Amber / outside
                 trk_label = f"ID #{det.track_id}" if det.track_id is not None else "Person"

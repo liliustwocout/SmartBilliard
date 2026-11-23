@@ -155,3 +155,49 @@ def test_pose_and_cue_policy_requires_playing_and_fires_unbilled_5m_alert():
     assert opened.memory.state == "ACTIVE"
     assert opened.memory.unbilled_alert is False
     assert opened.memory.playing_since is None
+
+
+def test_smart_stance_policy_rejects_idle_spectator_and_cleaning():
+    config = DecisionConfig(policy="SMART_STANCE", presence_seconds=3)
+    memory = Memory()
+
+    # Upright spectator: NOT_PLAYING, no felt motion, 1 side
+    spectator = Observation(present=True, confidence=0.9, activity_state="NOT_PLAYING", felt_motion=False, sides_visited=1)
+    for now in (0.0, 1.0, 2.0, 3.0):
+        res = advance(memory, spectator, now, config, auto_open=True)
+        memory = res.memory
+        assert res.reason == "NOT_PLAYING_POSTURE"
+        assert memory.state == "EMPTY"
+        assert not res.should_open
+
+    # Idle person standing still with UNKNOWN activity
+    idle = Observation(present=True, confidence=0.9, activity_state="UNKNOWN", felt_motion=False, sides_visited=1)
+    for now in (4.0, 5.0, 6.0, 7.0):
+        res = advance(memory, idle, now, config, auto_open=True)
+        memory = res.memory
+        assert res.reason == "SPECTATOR_OR_IDLE"
+        assert memory.state == "EMPTY"
+        assert not res.should_open
+
+
+def test_smart_stance_policy_opens_with_aiming_or_felt_or_navigation():
+    config = DecisionConfig(policy="SMART_STANCE", presence_seconds=3)
+
+    # 1. Aiming posture confirms
+    res = feed(config=config, auto_open=True, observation=Observation(
+        present=True, confidence=0.9, activity_state="PLAYING"
+    ))
+    assert res.should_open and res.memory.state == "ACTIVE"
+
+    # 2. Felt motion (rolling balls on cloth) confirms
+    res_felt = feed(config=config, auto_open=True, observation=Observation(
+        present=True, confidence=0.9, activity_state="UNKNOWN", felt_motion=True
+    ))
+    assert res_felt.should_open and res_felt.memory.state == "ACTIVE"
+
+    # 3. Multi-side navigation around table confirms
+    res_nav = feed(config=config, auto_open=True, observation=Observation(
+        present=True, confidence=0.9, activity_state="UNKNOWN", sides_visited=2
+    ))
+    assert res_nav.should_open and res_nav.memory.state == "ACTIVE"
+
