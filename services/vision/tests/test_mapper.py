@@ -167,3 +167,98 @@ def test_disabled_table_emits_no_observations_and_does_not_cause_ambiguity():
     assert 1 in summaries
     assert 2 not in summaries
     assert summaries[1].ambiguous is False
+
+
+def _kps(**entries: tuple[int, tuple[float, float, float]]) -> tuple[tuple[float, float, float], ...]:
+    pts = [(0.0, 0.0, 0.0)] * 17
+    for _, (idx, val) in entries.items():
+        pts[idx] = val
+    return tuple(pts)
+
+
+def test_mapper_play_surface_affinity_resolves_overlapping_corridor(sample_calibration: CalibrationConfig):
+    mapper = TableZoneMapper(sample_calibration)
+    # Feet sit in overlap corridor (0.48, 0.35), but hands & torso clearly aim onto Table 1 (right edge x=0.35)
+    kps = _kps(
+        ls=(5, (0.41, 0.24, 0.9)),
+        rs=(6, (0.42, 0.26, 0.9)),
+        lw=(9, (0.34, 0.25, 0.9)),
+        rw=(10, (0.39, 0.27, 0.9)),
+        lh=(11, (0.47, 0.28, 0.9)),
+        rh=(12, (0.48, 0.29, 0.9)),
+    )
+    det = PersonDetection(
+        bbox=(0.33, 0.20, 0.50, 0.36),
+        confidence=0.92,
+        foot_anchor=(0.48, 0.35),
+        track_id=21,
+        keypoints=kps,
+    )
+    assign = mapper.map_person(det)
+    assert assign.status == "ASSIGNED"
+    assert assign.matched_tables == [1]
+
+    _, summaries = mapper.map_frame([det])
+    assert summaries[1].present is True and summaries[1].ambiguous is False
+    assert summaries[2].present is False
+
+
+def test_mapper_rescues_splayed_foot_and_perspective_foreground_occlusion():
+    # Far Table 1 vs foreground Table 2 where player's lower legs are occluded down near Table 2
+    cfg = CalibrationConfig(
+        camera_id="cam-skew",
+        calibration_status="CALIBRATED",
+        coordinate_system="normalized_xy_0_1",
+        tables=[
+            TableZone(
+                table_id=1,
+                enabled=True,
+                play_polygon=[[0.22, 0.18], [0.52, 0.18], [0.54, 0.30], [0.20, 0.30]],
+                standing_polygon=[[0.18, 0.14], [0.56, 0.14], [0.58, 0.34], [0.16, 0.34]],
+            ),
+            TableZone(
+                table_id=2,
+                enabled=True,
+                play_polygon=[[0.15, 0.45], [0.60, 0.45], [0.65, 0.72], [0.10, 0.72]],
+                standing_polygon=[[0.08, 0.40], [0.68, 0.40], [0.72, 0.80], [0.05, 0.80]],
+            ),
+        ],
+    )
+    mapper = TableZoneMapper(cfg)
+
+    # Splayed foot slightly outside Table 1 standing zone, leaning into head rail of Table 1
+    kps_splayed = _kps(
+        ls=(5, (0.18, 0.23, 0.9)),
+        rs=(6, (0.19, 0.25, 0.9)),
+        lw=(9, (0.22, 0.24, 0.9)),
+        lh=(11, (0.13, 0.29, 0.9)),
+        rh=(12, (0.14, 0.30, 0.9)),
+    )
+    det_splayed = PersonDetection(
+        bbox=(0.11, 0.18, 0.23, 0.37),
+        confidence=0.90,
+        foot_anchor=(0.12, 0.37),
+        track_id=22,
+        keypoints=kps_splayed,
+    )
+    assign_splayed = mapper.map_person(det_splayed)
+    assert assign_splayed.status == "ASSIGNED" and assign_splayed.matched_tables == [1]
+
+    # Foreground occlusion: bottom bbox / foot clipped at Table 2's top standing border (y=0.41)
+    # while shoulders & bridge hands lie directly on Table 1's bottom rail (y=0.29)
+    kps_occluded = _kps(
+        ls=(5, (0.37, 0.27, 0.9)),
+        rs=(6, (0.41, 0.27, 0.9)),
+        lw=(9, (0.39, 0.29, 0.9)),
+        lh=(11, (0.38, 0.34, 0.9)),
+        rh=(12, (0.41, 0.34, 0.9)),
+    )
+    det_occluded = PersonDetection(
+        bbox=(0.34, 0.24, 0.44, 0.41),
+        confidence=0.91,
+        foot_anchor=(0.39, 0.41),
+        track_id=23,
+        keypoints=kps_occluded,
+    )
+    assign_occ = mapper.map_person(det_occluded)
+    assert assign_occ.status == "ASSIGNED" and assign_occ.matched_tables == [1]

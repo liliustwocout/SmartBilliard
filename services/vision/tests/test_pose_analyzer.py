@@ -281,3 +281,131 @@ def test_pose_analyzer_felt_motion_confirms_playing(table_zone: CalibrationConfi
     assert res_felt.activity_state == "PLAYING"
     assert res_felt.activity_reason == "PLAYING_FELT_MOTION"
 
+
+def test_pose_analyzer_detects_lateral_aiming_from_head_rail():
+    cfg = CalibrationConfig(
+        camera_id="cam-01",
+        tables=[
+            TableZone(
+                table_id=1,
+                enabled=True,
+                play_polygon=[[0.25, 0.30], [0.75, 0.30], [0.75, 0.60], [0.25, 0.60]],
+                standing_polygon=[[0.15, 0.22], [0.85, 0.22], [0.85, 0.72], [0.15, 0.72]],
+            )
+        ],
+    )
+    mapper = TableZoneMapper(cfg)
+    # Player standing at left head end, leaning sideways (dx substantial, vertical compression mild)
+    kps = _make_keypoints(
+        ls=(5, (0.24, 0.38, 0.9)),
+        rs=(6, (0.26, 0.39, 0.9)),
+        lw=(9, (0.31, 0.42, 0.9)),
+        rw=(10, (0.26, 0.44, 0.9)),
+        lh=(11, (0.16, 0.50, 0.9)),
+        rh=(12, (0.18, 0.50, 0.9)),
+        la=(15, (0.17, 0.70, 0.9)),
+        ra=(16, (0.19, 0.70, 0.9)),
+    )
+    player = Detection(
+        camera_id="cam-01",
+        timestamp=1.0,
+        kind="person",
+        bbox=(0.14, 0.32, 0.33, 0.72),
+        confidence=0.92,
+        track_id=11,
+        foot_anchor=(0.18, 0.70),
+        keypoints=kps,
+    )
+    _, summaries = mapper.map_frame([player], timestamp=1.0)
+    assert summaries[1].activity_state == "PLAYING"
+
+
+def test_pose_analyzer_detects_top_down_camera_aiming_without_hips():
+    cfg = CalibrationConfig(
+        camera_id="cam-top",
+        tables=[
+            TableZone(
+                table_id=1,
+                enabled=True,
+                play_polygon=[[0.20, 0.20], [0.80, 0.20], [0.80, 0.65], [0.20, 0.65]],
+                standing_polygon=[[0.10, 0.10], [0.90, 0.10], [0.90, 0.75], [0.10, 0.75]],
+            )
+        ],
+    )
+    mapper = TableZoneMapper(cfg)
+    # Overhead view: hips/ankles occluded (conf 0), only shoulders, elbows, wrists reaching felt
+    kps = _make_keypoints(
+        ls=(5, (0.48, 0.70, 0.9)),
+        rs=(6, (0.54, 0.70, 0.9)),
+        le=(7, (0.47, 0.63, 0.9)),
+        re=(8, (0.55, 0.66, 0.9)),
+        lw=(9, (0.49, 0.58, 0.9)),
+        rw=(10, (0.52, 0.63, 0.9)),
+    )
+    player = Detection(
+        camera_id="cam-top",
+        timestamp=1.0,
+        kind="person",
+        bbox=(0.44, 0.56, 0.58, 0.74),
+        confidence=0.90,
+        track_id=12,
+        foot_anchor=(0.51, 0.74),
+        keypoints=kps,
+    )
+    _, summaries = mapper.map_frame([player], timestamp=1.0)
+    assert summaries[1].activity_state == "PLAYING"
+
+
+def test_pose_analyzer_rejects_upright_spectator_resting_one_hand_near_rail(table_zone: CalibrationConfig):
+    mapper = TableZoneMapper(table_zone)
+    # Upright torso (vertical ratio > 0.36) with only one wrist lazily resting near rail
+    kps = _make_keypoints(
+        ls=(5, (0.10, 0.28, 0.9)),
+        rs=(6, (0.14, 0.28, 0.9)),
+        le=(7, (0.14, 0.38, 0.9)),
+        lw=(9, (0.16, 0.45, 0.9)),
+        lh=(11, (0.10, 0.51, 0.9)),
+        rh=(12, (0.14, 0.51, 0.9)),
+        la=(15, (0.10, 0.80, 0.9)),
+        ra=(16, (0.14, 0.80, 0.9)),
+    )
+    spectator = Detection(
+        camera_id="cam-01",
+        timestamp=1.0,
+        kind="person",
+        bbox=(0.08, 0.22, 0.17, 0.82),
+        confidence=0.91,
+        track_id=13,
+        foot_anchor=(0.12, 0.80),
+        keypoints=kps,
+    )
+    _, summaries = mapper.map_frame([spectator], timestamp=1.0)
+    assert summaries[1].activity_state == "NOT_PLAYING"
+
+
+def test_pose_analyzer_cleaning_motion_is_not_overridden_by_felt_motion(table_zone: CalibrationConfig):
+    mapper = TableZoneMapper(table_zone)
+    for step, x in enumerate((0.10, 0.16, 0.22, 0.28)):
+        ts = step * 0.4
+        kps = _make_keypoints(
+            ls=(5, (x, 0.40, 0.9)),
+            rs=(6, (x + 0.04, 0.40, 0.9)),
+            lw=(9, (x + 0.02 + (step % 2) * 0.08, 0.46, 0.9)),
+            rw=(10, (x + 0.04 + (step % 2) * 0.08, 0.46, 0.9)),
+            lh=(11, (x, 0.55, 0.9)),
+            rh=(12, (x + 0.04, 0.55, 0.9)),
+        )
+        cleaner = Detection(
+            camera_id="cam-01",
+            timestamp=ts,
+            kind="person",
+            bbox=(x - 0.02, 0.30, x + 0.08, 0.78),
+            confidence=0.89,
+            track_id=14,
+            foot_anchor=(x + 0.02, 0.78),
+            keypoints=kps,
+        )
+        _, summaries = mapper.map_frame([cleaner], timestamp=ts, felt_results={1: MagicMock(has_motion=True)})
+    assert summaries[1].activity_state == "NOT_PLAYING"
+    assert summaries[1].activity_reason == "CLEANING_MOTION"
+

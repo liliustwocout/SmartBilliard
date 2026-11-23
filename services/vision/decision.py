@@ -17,6 +17,7 @@ class DecisionConfig(BaseModel):
     cue_confidence: float = Field(default=.8, ge=0, le=1)
     unbilled_alert_seconds: float = Field(default=300.0, gt=0, le=7200)
     playing_hold_grace_seconds: float = Field(default=25.0, ge=0, le=300)
+    posture_pause_grace_seconds: float = Field(default=6.0, ge=0, le=60)
 
     @model_validator(mode="after")
     def thresholds(self):
@@ -34,6 +35,7 @@ class Observation:
     activity_state: Literal["PLAYING", "NOT_PLAYING", "UNKNOWN"] | None = None
     felt_motion: bool = False
     sides_visited: int = 1
+    activity_reason: str | None = None
 
 
 
@@ -97,9 +99,20 @@ def advance(memory: Memory, observation: Observation, now: float,
         memory.last_positive is not None
         and (now - memory.last_positive) > config.absence_grace_seconds
     )
-    if gap_expired or (absence_expired and not play_still_held):
+    candidate_posture_held = (
+        not gap_expired
+        and memory.state == "CANDIDATE"
+        and memory.candidate_since is not None
+        and memory.last_positive is not None
+        and observation.present
+        and not observation.ambiguous
+        and observation.activity_reason != "CLEANING_MOTION"
+        and (now - memory.last_positive) <= config.posture_pause_grace_seconds
+    )
+    if gap_expired or (absence_expired and not play_still_held and not candidate_posture_held):
         memory = Memory(cooldown_until=memory.cooldown_until)
         play_still_held = False
+        candidate_posture_held = False
 
     threshold = config.confidence_enter if memory.state in ("EMPTY", "CLOSED") else config.confidence_exit
     base_positive = observation.present and not observation.ambiguous and observation.confidence >= threshold
@@ -139,6 +152,11 @@ def advance(memory: Memory, observation: Observation, now: float,
                     unbilled_alert=alert,
                 ),
                 reason=held_reason,
+            )
+        if candidate_posture_held:
+            return Decision(
+                replace(memory, last_seen=now, activity_state=eff_activity),
+                reason=reason,
             )
         if observation.activity_state == "NOT_PLAYING" and not observation.felt_motion:
             return Decision(

@@ -156,6 +156,11 @@ export function buildNonOverlappingStandingPolygon(
   if (playPolygon.length < 3) return playPolygon;
   const cx = playPolygon.reduce((acc, p) => acc + p[0], 0) / playPolygon.length;
   const cy = playPolygon.reduce((acc, p) => acc + p[1], 0) / playPolygon.length;
+  const xs = playPolygon.map(p => p[0]);
+  const ys = playPolygon.map(p => p[1]);
+  const tableWidth = Math.max(0.05, Math.max(...xs) - Math.min(...xs));
+  const tableHeight = Math.max(0.02, Math.max(...ys) - Math.min(...ys));
+  const aspectFlatness = Math.min(2.2, Math.max(1.0, tableWidth / tableHeight));
   const baseScale = Math.max(1.05, Math.min(1.8, defaultScale));
   const scaleSteps = [baseScale, baseScale * 0.94, baseScale * 0.88, baseScale * 0.82, 1.12, 1.05, 1.03].filter(
     (v, i, arr) => v >= 1.03 && arr.indexOf(v) === i,
@@ -164,9 +169,10 @@ export function buildNonOverlappingStandingPolygon(
   const scalePt = (x: number, y: number, s: number): Point2D => {
     const persp = 1.0 + (y - cy) * 0.15;
     const clampedS = 1.0 + (s - 1.0) * Math.max(0.85, Math.min(1.25, persp));
+    const floorDrop = y > cy ? (s - 1.0) * 0.12 * tableWidth * Math.min(1.6, aspectFlatness * 0.7) : 0;
     return [
       clamp01(cx + (x - cx) * clampedS),
-      clamp01(cy + (y - cy) * clampedS),
+      clamp01(cy + (y - cy) * clampedS + floorDrop),
     ];
   };
 
@@ -734,8 +740,9 @@ export function RoiEditor({
     for (let i = 0; i < config.tables.length; i += 1) {
       const current = config.tables[i];
       const otherStandings = newTables
+        .filter(t => t.enabled)
         .map(t => t.standing_polygon)
-        .concat(config.tables.slice(i + 1).map(t => t.standing_polygon));
+        .concat(config.tables.slice(i + 1).filter(t => t.enabled).map(t => t.standing_polygon));
       const optimizedStanding = buildNonOverlappingStandingPolygon(
         current.play_polygon,
         otherStandings,
@@ -805,7 +812,7 @@ export function RoiEditor({
     }
     const alignedPlay = alignPerspectivePolygon(poly);
     const otherStanding = config.tables
-      .filter(t => t.table_id !== selectedTable)
+      .filter(t => t.table_id !== selectedTable && t.enabled)
       .map(t => t.standing_polygon);
     const alignedStanding = buildNonOverlappingStandingPolygon(alignedPlay, otherStanding, 1 + standingMargin / 100);
 

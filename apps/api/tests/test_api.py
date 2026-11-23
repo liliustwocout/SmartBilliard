@@ -723,3 +723,33 @@ def test_dashboard_snapshot_exposes_sanitized_camera_source(tmp_path):
         assert reset.status_code == 200, reset.text
         restored = client.get("/api/dashboard").json()["camera_source"]
         assert "secret" not in restored and "127.0.0.1:554/stream" in restored
+
+
+def test_staff_confirmation_preserves_camera_or_video_evidence_source(tmp_path):
+    now = [datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc)]
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'evidence.db'}",
+        auto_open=False,
+        decision=DecisionConfig(policy="SMART_STANCE", presence_seconds=2.0),
+    )
+    with TestClient(create_app(settings, lambda: now[0]), base_url="http://127.0.0.1") as client:
+        for table_id, src in ((1, "CAMERA"), (2, "VIDEO")):
+            for step in range(4):
+                now[0] = now[0] + timedelta(seconds=1)
+                res = client.post(
+                    "/api/ingestion/events",
+                    json={
+                        "event_id": str(uuid4()),
+                        "table_id": table_id,
+                        "present": True,
+                        "confidence": 0.9,
+                        "activity_state": "PLAYING",
+                        "source": src,
+                    },
+                )
+                assert res.status_code == 200, res.text
+            opened = client.post(f"/api/tables/{table_id}/open")
+            assert opened.status_code == 200, opened.text
+            data = opened.json()
+            assert data["trigger_source"] == "STAFF_CONFIRMATION"
+            assert data["evidence_source"] == src

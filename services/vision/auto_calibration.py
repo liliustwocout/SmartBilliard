@@ -315,8 +315,14 @@ def estimate_standing_polygon(surface: np.ndarray, margin: float) -> list[list[f
     width, height = (2.0, 1.0) if edges[0] + edges[2] >= edges[1] + edges[3] else (1.0, 2.0)
     plane = np.array([[0, 0], [width, 0], [width, height], [0, height]], dtype=np.float32)
     transform = cv2.getPerspectiveTransform(plane, surface.astype(np.float32))
-    expanded = np.array([[-margin, -margin], [width + margin, -margin],
-                         [width + margin, height + margin], [-margin, height + margin]], dtype=np.float32)
+    top_m = margin * 0.75
+    side_m = margin
+    bot_m = margin * 1.25
+    expanded = np.array(
+        [[-side_m, -top_m], [width + side_m, -top_m],
+         [width + side_m, height + bot_m], [-side_m, height + bot_m]],
+        dtype=np.float32,
+    )
     homogeneous = np.column_stack((expanded, np.ones(4))) @ transform.T
     divisors = homogeneous[:, 2]
     if np.any(np.abs(divisors) < 1e-6) or not (np.all(divisors > 0) or np.all(divisors < 0)):
@@ -393,17 +399,55 @@ def propose_table_zones(
     tables = dict(existing)
     updated_ids: list[int] = []
     warnings = ["Vùng đứng là ước lượng theo hình ảnh. Kiểm tra lại vị trí chân người và vùng chồng lấn trước khi lưu."]
+    created_enabled_standings: list[Polygon] = [
+        [tuple(pt) for pt in tbl.standing_polygon]
+        for tid, tbl in existing.items()
+        if tid not in assigned.values() and tbl.enabled
+    ]
     for index, table_id in assigned.items():
         surface = surfaces[index]
-        try:
-            tables[table_id] = TableZone(
-                table_id=table_id,
-                enabled=existing[table_id].enabled if table_id in existing else True,
-                play_polygon=surface.astype(float).tolist(),
-                standing_polygon=estimate_standing_polygon(surface, config.standing_margin),
-            )
+        is_enabled = existing[table_id].enabled if table_id in existing else True
+        candidate_margins: list[float] = []
+        for margin in (
+            config.standing_margin,
+            config.standing_margin * 0.8,
+            config.standing_margin * 0.6,
+            config.standing_margin * 0.45,
+            0.20,
+            0.12,
+        ):
+            m_round = round(float(margin), 4)
+            if m_round > 0 and m_round not in candidate_margins:
+                candidate_margins.append(m_round)
+        if not candidate_margins:
+            candidate_margins = [0.12]
+
+        chosen_zone: TableZone | None = None
+        last_valid_zone: TableZone | None = None
+        for margin in candidate_margins:
+            try:
+                candidate_standing = estimate_standing_polygon(surface, margin)
+                candidate_zone = TableZone(
+                    table_id=table_id,
+                    enabled=is_enabled,
+                    play_polygon=surface.astype(float).tolist(),
+                    standing_polygon=candidate_standing,
+                )
+            except ValueError:
+                continue
+            last_valid_zone = candidate_zone
+            poly_pts = [tuple(pt) for pt in candidate_zone.standing_polygon]
+            if not any(polygons_overlap(poly_pts, other) for other in created_enabled_standings):
+                chosen_zone = candidate_zone
+                break
+
+        final_zone = chosen_zone or last_valid_zone
+        if final_zone is not None:
+            tables[table_id] = final_zone
             updated_ids.append(table_id)
-        except ValueError:
+            if is_enabled:
+                created_enabled_standings.append([tuple(pt) for pt in final_zone.standing_polygon])
+        else:
             warnings.append(f"Chưa tạo được vùng hợp lệ cho Bàn {table_id:02d}; giữ nguyên ROI cũ nếu có.")
     retained = sorted(set(existing) - set(updated_ids))
     if retained:

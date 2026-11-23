@@ -10,4 +10,5 @@ cooldown_seconds = 15.0
 cue_confidence = 0.8
 unbilled_alert_seconds = 300.0
 playing_hold_grace_seconds = 25.0
+posture_pause_grace_seconds = 6.0
 

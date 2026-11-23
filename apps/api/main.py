@@ -106,7 +106,8 @@ def create_app(settings: Settings | None = None,
                             now: datetime | None = None,
                             activity_state: str | None = None,
                             felt_motion: bool = False,
-                            sides_visited: int = 1):
+                            sides_visited: int = 1,
+                            activity_reason: str | None = None):
         now = now or utc(clock())
         table = require_table(db, table_id)
         previous = db.get(DetectionEvent, str(event_id))
@@ -129,6 +130,7 @@ def create_app(settings: Settings | None = None,
             activity_state=activity_state,
             felt_motion=felt_motion,
             sides_visited=sides_visited,
+            activity_reason=activity_reason,
         ), now.timestamp(), settings.decision, active=current is not None,
             auto_open=settings.auto_open, cue_detector_ready=cue_ready)
         table.memory = asdict(decision.memory)
@@ -176,6 +178,7 @@ def create_app(settings: Settings | None = None,
                     activity_state=summary.activity_state,
                     felt_motion=summary.felt_motion,
                     sides_visited=summary.sides_visited,
+                    activity_reason=summary.activity_reason,
                 )
                 db.commit()
                 if result["state"] == "ACTIVE":
@@ -417,12 +420,21 @@ def create_app(settings: Settings | None = None,
                 session = active_session(db, table_id)
                 if session is None:
                     confirmed = table.memory.get("state") == "NEEDS_CONFIRMATION"
+                    evidence_source = None
+                    if confirmed:
+                        latest_source = db.scalar(
+                            select(DetectionEvent.source)
+                            .where(DetectionEvent.table_id == table_id, DetectionEvent.event_type == "PRESENCE")
+                            .order_by(DetectionEvent.timestamp.desc(), DetectionEvent.id.desc())
+                            .limit(1)
+                        )
+                        evidence_source = latest_source or "SIMULATED"
                     started_at = now
                     playing_since = table.memory.get("playing_since")
                     if backdate_to_ai and isinstance(playing_since, (int, float)) and playing_since <= now.timestamp():
                         started_at = utc(datetime.fromtimestamp(playing_since, tz=timezone.utc))
                     session = new_session(db, table, started_at, "STAFF_CONFIRMATION" if confirmed else "STAFF",
-                                          "SIMULATED" if confirmed else None)
+                                          evidence_source)
                     db.commit()
                 sync_paused_tables(db)
                 result = serialize_session(session, now)
