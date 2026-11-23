@@ -119,10 +119,18 @@ class VisionPipeline:
 
         felt_results: dict[int, FeltMotionResult] = {}
         if self.felt_detector is not None:
+            person_bboxes = [
+                d.bbox
+                for d in detections
+                if getattr(d, "kind", "person") == "person" and hasattr(d, "bbox")
+            ]
             for table in self.mapper.config.tables:
                 if table.enabled and table.table_id not in paused_table_ids:
                     felt_results[table.table_id] = self.felt_detector.detect_motion(
-                        frame, table.table_id, table.play_polygon
+                        frame,
+                        table.table_id,
+                        table.play_polygon,
+                        exclude_bboxes=person_bboxes,
                     )
 
         _, table_summaries = self.mapper.map_frame(

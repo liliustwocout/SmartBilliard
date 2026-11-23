@@ -11,7 +11,14 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
-from services.vision.calibration import Point, Polygon, TableZone, point_in_polygon, segments_intersect
+from services.vision.calibration import (
+    Point,
+    Polygon,
+    TableZone,
+    point_in_polygon,
+    polygon_area,
+    segments_intersect,
+)
 from services.vision.contracts import ActivityState, Detection, Keypoint
 
 # COCO-17 keypoint indices
@@ -102,6 +109,25 @@ def _determine_table_side(point: Point, table: TableZone) -> str:
     poly = table.play_polygon if len(table.play_polygon) >= 3 else table.standing_polygon
     if not poly:
         return "UNKNOWN"
+    if len(poly) == 4:
+        p0, p1, p2, p3 = poly
+        cx = sum(p[0] for p in poly) / 4.0
+        cy = sum(p[1] for p in poly) / 4.0
+        u_x = ((p1[0] + p2[0]) / 2.0) - ((p0[0] + p3[0]) / 2.0)
+        u_y = ((p1[1] + p2[1]) / 2.0) - ((p0[1] + p3[1]) / 2.0)
+        v_x = ((p2[0] + p3[0]) / 2.0) - ((p0[0] + p1[0]) / 2.0)
+        v_y = ((p2[1] + p3[1]) / 2.0) - ((p0[1] + p1[1]) / 2.0)
+        u_norm2 = u_x * u_x + u_y * u_y
+        v_norm2 = v_x * v_x + v_y * v_y
+        if u_norm2 > 1e-8 and v_norm2 > 1e-8:
+            rel_x = point[0] - cx
+            rel_y = point[1] - cy
+            u_coord = (rel_x * u_x + rel_y * u_y) / u_norm2
+            v_coord = (rel_x * v_x + rel_y * v_y) / v_norm2
+            if abs(u_coord) > abs(v_coord):
+                return "LEFT_RAIL" if u_coord < 0 else "RIGHT_RAIL"
+            return "HEAD" if v_coord < 0 else "FOOT"
+
     xs = [p[0] for p in poly]
     ys = [p[1] for p in poly]
     cx = (min(xs) + max(xs)) / 2.0
@@ -183,7 +209,8 @@ class PoseCueAnalyzer:
         lean_torso_ratio: float = 0.24,
         hip_cleaning_speed: float = 0.08,
         wrist_cleaning_speed: float = 0.18,
-        history_window: int = 20,
+        history_window: int = 90,
+        history_seconds: float = 12.0,
         track_ttl_seconds: float = 30.0,
     ) -> None:
         self.wrist_cue_max_distance = wrist_cue_max_distance
@@ -191,6 +218,7 @@ class PoseCueAnalyzer:
         self.lean_torso_ratio = lean_torso_ratio
         self.hip_cleaning_speed = hip_cleaning_speed
         self.wrist_cleaning_speed = wrist_cleaning_speed
+        self.history_seconds = history_seconds
         self.track_ttl_seconds = track_ttl_seconds
         # track_id -> deque of (timestamp, hip_mid, wrist_mid, foot_anchor, side_label)
         self._history: dict[int, deque[tuple[float, Point | None, Point | None, Point | None, str | None]]] = {}
@@ -235,6 +263,8 @@ class PoseCueAnalyzer:
         hist = self._history.setdefault(track_id, deque(maxlen=self._history_window))
         if not hist or timestamp > hist[-1][0]:
             hist.append((timestamp, hip_mid, wrist_mid, foot_anchor, side_label))
+        while len(hist) > 1 and (timestamp - hist[0][0]) > self.history_seconds:
+            hist.popleft()
 
         feet = [item[3] for item in hist if len(item) > 3 and item[3] is not None]
         sides = {item[4] for item in hist if len(item) > 4 and item[4] is not None and item[4] != "UNKNOWN"}
@@ -362,18 +392,35 @@ class PoseCueAnalyzer:
         ]
         arm_bent = any(45.0 <= ang <= 165.0 for ang in elbow_angles)
 
+        table_scale = max(0.05, math.sqrt(polygon_area(play_poly)))
+        eff_on_margin = max(0.015, min(self.wrist_table_margin, 0.16 * table_scale))
+        eff_near_margin = max(0.05, min(0.12, 0.45 * table_scale))
+
         # Wrist reaching inside or close to felt play zone
         wrist_dists = [point_to_polygon_distance(w, play_poly) for w in wrists]
-        wrist_on_table = any(d <= self.wrist_table_margin for d in wrist_dists)
-        wrist_near_table = any(d <= 0.12 for d in wrist_dists)
+        wrist_on_table = any(d <= eff_on_margin for d in wrist_dists)
+        wrist_near_table = any(d <= eff_near_margin for d in wrist_dists)
 
         leaning = False
+        clearly_upright = False
         if shoulder_mid is not None and hip_mid is not None:
-            torso_ratio = abs(hip_mid[1] - shoulder_mid[1]) / bbox_h
-            # Leaning over the table compresses vertical shoulder-hip span; require hand near table to reject upright standing
-            leaning = torso_ratio < self.lean_torso_ratio and (wrist_near_table or not wrists)
+            torso_vert_ratio = abs(hip_mid[1] - shoulder_mid[1]) / bbox_h
+            torso_2d_ratio = _dist(shoulder_mid, hip_mid) / bbox_h
+            d_shoulder = point_to_polygon_distance(shoulder_mid, play_poly)
+            d_hip = point_to_polygon_distance(hip_mid, play_poly)
+            leaning_into_table = d_shoulder <= d_hip + 0.015
+            lateral_lean = (
+                abs(shoulder_mid[0] - hip_mid[0]) >= 0.35 * max(1e-4, abs(hip_mid[1] - shoulder_mid[1]))
+                and torso_vert_ratio < 0.36
+                and leaning_into_table
+            )
+            vertical_lean = torso_vert_ratio < self.lean_torso_ratio or torso_2d_ratio < self.lean_torso_ratio
+            leaning = (vertical_lean or lateral_lean) and (wrist_near_table or d_shoulder <= eff_near_margin)
+            clearly_upright = torso_vert_ratio >= 0.33 and not lateral_lean and len(wrists) < 2
 
-        aiming = leaning or (wrist_on_table and (arm_bent or not elbow_angles))
+        two_hands_engaged = len(wrists) >= 2 and sum(1 for d in wrist_dists if d <= eff_near_margin) >= 2
+        bridge_aiming = wrist_on_table and (arm_bent or not elbow_angles) and (not clearly_upright or two_hands_engaged)
+        aiming = leaning or bridge_aiming
         return True, aiming
 
     def analyze_person(
@@ -393,7 +440,20 @@ class PoseCueAnalyzer:
             x1, y1, x2, y2 = det.bbox
             foot_anchor = ((x1 + x2) / 2.0, y2)
 
-        side_label = _determine_table_side(foot_anchor, table) if foot_anchor else "UNKNOWN"
+        table_scale = max(0.05, math.sqrt(polygon_area(play_poly)))
+        confident_wrists = [
+            pt
+            for pt in (
+                _confident_kp(keypoints, LEFT_WRIST) if keypoints else None,
+                _confident_kp(keypoints, RIGHT_WRIST) if keypoints else None,
+            )
+            if pt is not None
+        ]
+        near_rail = (
+            (foot_anchor is not None and point_to_polygon_distance(foot_anchor, play_poly) <= max(0.14, 0.80 * table_scale))
+            or any(point_to_polygon_distance(w, play_poly) <= max(0.10, 0.50 * table_scale) for w in confident_wrists)
+        )
+        side_label = _determine_table_side(foot_anchor, table) if (foot_anchor and near_rail) else "UNKNOWN"
         hip_speed, wrist_speed, sides_visited, dispersion = self._update_motion_history(
             track_id, keypoints, timestamp, foot_anchor=foot_anchor, side_label=side_label
         )
@@ -435,7 +495,8 @@ class PoseCueAnalyzer:
             )
 
         # Player walking / maneuvering around table to line up shots
-        if sides_visited >= 2 and dispersion >= 0.08:
+        nav_min_disp = max(0.05, min(0.08, 0.25 * table_scale))
+        if sides_visited >= 2 and dispersion >= nav_min_disp and hip_speed <= 0.35:
             return PersonAnalysis(
                 track_id=track_id,
                 activity="PLAYING",
@@ -507,13 +568,15 @@ class PoseCueAnalyzer:
             reason = "PLAYING_ACTIVE" if "PLAYING_ACTIVE" in act_reasons else "PLAYER_NAVIGATING"
             return TableAnalysisResult("PLAYING", best_cue, reason, max_sides, max_disp)
 
+        if any(a.cleaning_motion for a in analyses):
+            return TableAnalysisResult("NOT_PLAYING", None, "CLEANING_MOTION", max_sides, max_disp)
+
         if felt_motion and unambiguous_assignments:
             cue_confs = [a.cue_confidence for a in analyses if a.cue_confidence is not None]
             best_cue = max(cue_confs) if cue_confs else None
             return TableAnalysisResult("PLAYING", best_cue, "PLAYING_FELT_MOTION", max_sides, max_disp)
 
         if any(a.activity == "NOT_PLAYING" for a in analyses) and not any(a.activity == "UNKNOWN" for a in analyses):
-            reason = "CLEANING_MOTION" if any(a.cleaning_motion for a in analyses) else "SPECTATOR_OR_CLEANING"
-            return TableAnalysisResult("NOT_PLAYING", None, reason, max_sides, max_disp)
+            return TableAnalysisResult("NOT_PLAYING", None, "SPECTATOR_OR_CLEANING", max_sides, max_disp)
 
         return TableAnalysisResult("UNKNOWN", None, "BBOX_ONLY", max_sides, max_disp)

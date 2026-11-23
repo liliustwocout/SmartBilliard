@@ -21,6 +21,7 @@ class FeltMotionResult:
     motion_energy: float
     active_pixels: int
     motion_ratio: float
+    is_mass_disturbance: bool = False
 
 
 class FeltMotionDetector:
@@ -34,27 +35,34 @@ class FeltMotionDetector:
         min_motion_ratio: float = 0.0003,
         min_motion_energy: float = 0.004,
         blur_kernel_size: int = 5,
+        max_ball_motion_ratio: float = 0.12,
     ) -> None:
         self.pixel_threshold = pixel_threshold
         self.min_active_pixels = min_active_pixels
         self.min_motion_ratio = min_motion_ratio
         self.min_motion_energy = min_motion_energy
         self.blur_kernel_size = blur_kernel_size
+        self.max_ball_motion_ratio = max_ball_motion_ratio
         self._prev_rois: dict[int, np.ndarray] = {}
+        self._prev_person_masks: dict[int, np.ndarray] = {}
         self._morph_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
 
     def reset(self, table_id: int | None = None) -> None:
         """Reset cached previous frame for a specific table or all tables."""
         if table_id is None:
             self._prev_rois.clear()
+            self._prev_person_masks.clear()
         else:
             self._prev_rois.pop(table_id, None)
+            self._prev_person_masks.pop(table_id, None)
 
     def detect_motion(
         self,
         frame: np.ndarray,
         table_id: int,
         play_polygon: Polygon,
+        *,
+        exclude_bboxes: Sequence[tuple[float, float, float, float]] = (),
     ) -> FeltMotionResult:
         """Analyze motion on the cloth surface of the specified table.
 
@@ -127,6 +135,19 @@ class FeltMotionDetector:
                 motion_ratio=0.0,
             )
 
+        # Mask out detected person bounding boxes over the felt to suppress limb/shadow ghosts
+        person_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
+        for bx1, by1, bx2, by2 in exclude_bboxes:
+            rx1 = max(0, int(bx1 * w) - min_x - 3)
+            ry1 = max(0, int(by1 * h) - min_y - 3)
+            rx2 = min(roi_w, int(bx2 * w) - min_x + 3)
+            ry2 = min(roi_h, int(by2 * h) - min_y + 3)
+            if rx2 > rx1 and ry2 > ry1:
+                person_mask[ry1:ry2, rx1:rx2] = 255
+
+        prev_person_mask = self._prev_person_masks.get(table_id)
+        self._prev_person_masks[table_id] = person_mask
+
         # Compare with previous frame
         prev = self._prev_rois.get(table_id)
         self._prev_rois[table_id] = blurred
@@ -140,9 +161,27 @@ class FeltMotionDetector:
                 motion_ratio=0.0,
             )
 
+        combined_person_mask = person_mask
+        if prev_person_mask is not None and prev_person_mask.shape == person_mask.shape:
+            combined_person_mask = cv2.bitwise_or(person_mask, prev_person_mask)
+
+        if cv2.countNonZero(combined_person_mask) > 0:
+            effective_mask = cv2.bitwise_and(mask, cv2.bitwise_not(combined_person_mask))
+        else:
+            effective_mask = mask
+
+        visible_area = cv2.countNonZero(effective_mask)
+        if visible_area < 20:
+            return FeltMotionResult(
+                has_motion=False,
+                motion_energy=0.0,
+                active_pixels=0,
+                motion_ratio=0.0,
+            )
+
         # Absolute frame differencing
         diff = cv2.absdiff(blurred, prev)
-        diff_masked = cv2.bitwise_and(diff, diff, mask=mask)
+        diff_masked = cv2.bitwise_and(diff, diff, mask=effective_mask)
 
         # Thresholding
         _, thresh = cv2.threshold(
@@ -156,8 +195,17 @@ class FeltMotionDetector:
         opened = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, self._morph_kernel)
 
         active_pixels = int(cv2.countNonZero(opened))
-        motion_ratio = active_pixels / float(poly_area)
-        motion_energy = float(np.sum(diff_masked) / (float(poly_area) * 255.0))
+        motion_ratio = active_pixels / float(visible_area)
+        motion_energy = float(np.sum(diff_masked) / (float(visible_area) * 255.0))
+
+        if motion_ratio > self.max_ball_motion_ratio:
+            return FeltMotionResult(
+                has_motion=False,
+                motion_energy=motion_energy,
+                active_pixels=active_pixels,
+                motion_ratio=motion_ratio,
+                is_mass_disturbance=True,
+            )
 
         has_motion = (
             (active_pixels >= self.min_active_pixels and motion_ratio >= self.min_motion_ratio)

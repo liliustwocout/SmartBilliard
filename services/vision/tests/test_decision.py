@@ -201,3 +201,50 @@ def test_smart_stance_policy_opens_with_aiming_or_felt_or_navigation():
     ))
     assert res_nav.should_open and res_nav.memory.state == "ACTIVE"
 
+
+def test_candidate_preserves_progress_during_posture_pause_between_shots():
+    config = DecisionConfig(
+        policy="SMART_STANCE",
+        presence_seconds=6.0,
+        max_observation_gap_seconds=2.5,
+        absence_grace_seconds=2.0,
+        posture_pause_grace_seconds=6.0,
+    )
+    playing = Observation(present=True, confidence=0.9, activity_state="PLAYING", activity_reason="PLAYING_ACTIVE")
+    upright = Observation(present=True, confidence=0.9, activity_state="NOT_PLAYING", activity_reason="SPECTATOR_POSTURE")
+
+    memory = Memory()
+    for now in (0.0, 1.0, 2.0, 3.0):
+        res = advance(memory, playing, now, config, auto_open=False)
+        memory = res.memory
+    assert memory.state == "CANDIDATE"
+    assert memory.candidate_since == 0.0
+
+    # Upright between shots for 3s (> absence_grace_seconds=2.0, <= posture_pause_grace_seconds=6.0)
+    for now in (4.0, 5.0, 6.0):
+        res = advance(memory, upright, now, config, auto_open=False)
+        memory = res.memory
+        assert memory.state == "CANDIDATE"
+        assert memory.candidate_since == 0.0
+
+    # Resume stroke -> immediately reaches NEEDS_CONFIRMATION without restarting countdown
+    res = advance(memory, playing, 7.0, config, auto_open=False)
+    assert res.memory.state == "NEEDS_CONFIRMATION"
+    assert res.memory.playing_since == 0.0
+
+
+def test_candidate_resets_immediately_on_cleaning_motion():
+    config = DecisionConfig(policy="SMART_STANCE", presence_seconds=6.0, posture_pause_grace_seconds=6.0)
+    playing = Observation(present=True, confidence=0.9, activity_state="PLAYING", activity_reason="PLAYING_ACTIVE")
+    cleaning = Observation(present=True, confidence=0.9, activity_state="NOT_PLAYING", activity_reason="CLEANING_MOTION")
+
+    memory = Memory()
+    for now in (0.0, 1.0, 2.0):
+        memory = advance(memory, playing, now, config).memory
+    assert memory.state == "CANDIDATE"
+
+    res = advance(memory, cleaning, 3.0, config)
+    assert res.memory.state == "EMPTY"
+    assert res.memory.candidate_since is None
+    assert res.reason == "NOT_PLAYING_POSTURE"
+

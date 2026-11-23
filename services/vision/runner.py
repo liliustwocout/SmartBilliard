@@ -41,6 +41,66 @@ def _infer_source_type(source: str | int) -> str:
     return "VIDEO"
 
 
+def _merge_pending_summary(
+    prev: TableObservationSummary | None,
+    cur: TableObservationSummary,
+) -> TableObservationSummary:
+    """Aggregate frame-level summaries inside an observation emission window."""
+    if prev is None:
+        return cur
+    if cur.activity_reason == "CLEANING_MOTION":
+        return TableObservationSummary(
+            table_id=cur.table_id,
+            present=cur.present,
+            confidence=max(prev.confidence, cur.confidence),
+            ambiguous=cur.ambiguous,
+            people_count=cur.people_count,
+            track_ids=cur.track_ids,
+            cue_confidence=cur.cue_confidence,
+            activity_state="NOT_PLAYING",
+            activity_reason="CLEANING_MOTION",
+            felt_motion=False,
+            motion_energy=cur.motion_energy,
+            sides_visited=max(prev.sides_visited, cur.sides_visited),
+            spatial_dispersion=max(prev.spatial_dispersion, cur.spatial_dispersion),
+        )
+
+    felt_motion = prev.felt_motion or cur.felt_motion
+    keep_playing = prev.activity_state == "PLAYING" or cur.activity_state == "PLAYING"
+    activity_state = "PLAYING" if keep_playing else cur.activity_state
+    activity_reason = (
+        prev.activity_reason
+        if prev.activity_state == "PLAYING" and cur.activity_state != "PLAYING"
+        else cur.activity_reason
+    )
+    if cur.present and prev.present:
+        present = True
+        ambiguous = prev.ambiguous and cur.ambiguous
+    elif prev.present and (prev.activity_state == "PLAYING" or prev.felt_motion):
+        present = True
+        ambiguous = prev.ambiguous
+    else:
+        present = cur.present
+        ambiguous = cur.ambiguous
+    cue_vals = [val for val in (prev.cue_confidence, cur.cue_confidence) if val is not None]
+    cue_confidence = max(cue_vals) if cue_vals else None
+    return TableObservationSummary(
+        table_id=cur.table_id,
+        present=present,
+        confidence=max(prev.confidence, cur.confidence),
+        ambiguous=ambiguous,
+        people_count=max(prev.people_count, cur.people_count),
+        track_ids=cur.track_ids or prev.track_ids,
+        cue_confidence=cue_confidence,
+        activity_state=activity_state,
+        activity_reason=activity_reason,
+        felt_motion=felt_motion,
+        motion_energy=max(prev.motion_energy, cur.motion_energy),
+        sides_visited=max(prev.sides_visited, cur.sides_visited),
+        spatial_dispersion=max(prev.spatial_dispersion, cur.spatial_dispersion),
+    )
+
+
 class CameraRunner:
     """Background camera processing runner feeding events into FSM."""
 
@@ -323,6 +383,7 @@ class CameraRunner:
         frame_times: deque[float] = deque(maxlen=60)
         inference_times: deque[float] = deque(maxlen=60)
         last_emit = float("-inf")
+        pending_summaries: dict[int, TableObservationSummary] = {}
 
         while not self._stop_event.is_set():
             loop_start = time.perf_counter()
@@ -331,9 +392,15 @@ class CameraRunner:
             try:
                 if self._pipeline is not None:
                     paused = self.paused_tables
+                    for tid in list(pending_summaries):
+                        if tid in paused:
+                            pending_summaries.pop(tid, None)
                     ok, frame, detections, summaries = self._pipeline.process_frame_for_tables(
                         timestamp=now_ts, paused_table_ids=paused)
                     summaries = {tid: item for tid, item in summaries.items() if tid not in paused}
+                    if ok:
+                        for tid, item in summaries.items():
+                            pending_summaries[tid] = _merge_pending_summary(pending_summaries.get(tid), item)
                     with self._lock:
                         if ok and frame is not None:
                             self._frame_sequence += 1
@@ -357,10 +424,12 @@ class CameraRunner:
                             inference_times.clear()
                             self._inference_fps_measured = 0.0
 
-                    # Emit observations to callback
-                    if ok and self.on_observation and summaries and loop_start - last_emit >= 1 / self.performance.observation_fps:
+                    # Emit aggregated 1-second window observations to callback
+                    if ok and self.on_observation and pending_summaries and loop_start - last_emit >= 1 / self.performance.observation_fps:
                         last_emit = loop_start
-                        for table_id, summary in summaries.items():
+                        to_emit = list(pending_summaries.items())
+                        pending_summaries.clear()
+                        for table_id, summary in to_emit:
                             try:
                                 self.on_observation(table_id, summary, self.source_type)
                             except Exception as cb_err:

@@ -9,15 +9,36 @@ Maps person foot anchors to table standing zones:
 from __future__ import annotations
 
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from services.vision.calibration import CalibrationConfig, Point, TableZone, load_calibration_config, point_in_polygon
+from services.vision.calibration import (
+    CalibrationConfig,
+    Point,
+    TableZone,
+    load_calibration_config,
+    point_in_polygon,
+    polygon_area,
+)
 from services.vision.contracts import ActivityState, Detection
 from services.vision.decision import Observation
-from services.vision.pose_analyzer import PoseCueAnalyzer
+from services.vision.pose_analyzer import (
+    LEFT_ELBOW,
+    LEFT_HIP,
+    LEFT_SHOULDER,
+    LEFT_WRIST,
+    RIGHT_ELBOW,
+    RIGHT_HIP,
+    RIGHT_SHOULDER,
+    RIGHT_WRIST,
+    PoseCueAnalyzer,
+    _confident_kp,
+    _midpoint,
+    point_to_polygon_distance,
+)
 
 logger = logging.getLogger("smartbilliard.vision.mapper")
 
@@ -55,6 +76,7 @@ class TableObservationSummary:
             ambiguous=self.ambiguous,
             cue_confidence=self.cue_confidence,
             activity_state=self.activity_state,
+            activity_reason=self.activity_reason,
             felt_motion=self.felt_motion,
             sides_visited=self.sides_visited,
         )
@@ -76,8 +98,65 @@ class TableZoneMapper:
     def update_config(self, config: CalibrationConfig) -> None:
         self.config = config
 
+    def _resolve_by_play_surface_affinity(self, det: Any, standing_matched: list[int]) -> int | None:
+        """Assign ambiguous/occluded player by upper-body & hand reach onto a single table's play_polygon."""
+        del standing_matched
+        keypoints = getattr(det, "keypoints", None)
+        if keypoints is None:
+            return None
+
+        lw = _confident_kp(keypoints, LEFT_WRIST)
+        rw = _confident_kp(keypoints, RIGHT_WRIST)
+        le = _confident_kp(keypoints, LEFT_ELBOW)
+        re = _confident_kp(keypoints, RIGHT_ELBOW)
+        hand_pts = [p for p in (lw, rw, le, re) if p is not None]
+        if not hand_pts:
+            return None
+
+        shoulder_mid = _midpoint(
+            _confident_kp(keypoints, LEFT_SHOULDER),
+            _confident_kp(keypoints, RIGHT_SHOULDER),
+        )
+        hip_mid = _midpoint(
+            _confident_kp(keypoints, LEFT_HIP),
+            _confident_kp(keypoints, RIGHT_HIP),
+        )
+        upper = shoulder_mid or hip_mid
+
+        candidates: list[tuple[float, int]] = []
+        for table in self.config.tables:
+            if not table.enabled:
+                continue
+            play_poly = [tuple(p) for p in table.play_polygon]
+            if len(play_poly) < 3:
+                continue
+            table_scale = max(0.05, math.sqrt(polygon_area(play_poly)))
+            reach_margin = max(0.018, min(0.038, 0.16 * table_scale))
+            min_hand_dist = min(point_to_polygon_distance(p, play_poly) for p in hand_pts)
+            if min_hand_dist > reach_margin:
+                continue
+
+            upper_dist = 0.0
+            if upper is not None:
+                upper_dist = point_to_polygon_distance(upper, play_poly)
+                if upper_dist > max(0.14, 0.85 * table_scale):
+                    continue
+            if shoulder_mid is not None and hip_mid is not None:
+                if point_to_polygon_distance(shoulder_mid, play_poly) > point_to_polygon_distance(hip_mid, play_poly) + 0.03:
+                    continue
+
+            score = min_hand_dist + 0.3 * upper_dist
+            candidates.append((score, table.table_id))
+
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item[0])
+        if len(candidates) == 1 or (candidates[0][0] + 0.025) < candidates[1][0]:
+            return candidates[0][1]
+        return None
+
     def map_person(self, det: Any) -> PersonAssignment:
-        """Map a single person detection to matching tables using foot anchor."""
+        """Map a single person detection to matching tables using foot anchor and play-surface affinity."""
         # Extract foot anchor
         if hasattr(det, "foot_anchor") and det.foot_anchor is not None:
             foot = det.foot_anchor
@@ -98,7 +177,11 @@ class TableZoneMapper:
             if point_in_polygon(foot, poly):
                 matched.append(table.table_id)
 
-        if len(matched) == 0:
+        affinity_table = self._resolve_by_play_surface_affinity(det, matched)
+        if affinity_table is not None:
+            matched = [affinity_table]
+            status = "ASSIGNED"
+        elif len(matched) == 0:
             status = "OUTSIDE"
         elif len(matched) == 1:
             status = "ASSIGNED"
