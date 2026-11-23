@@ -9,6 +9,7 @@ import {
   getNextUncalibratedTableId,
   polygonsOverlap,
   removeTableZoneFromConfig,
+  shouldRefreshRoiPreview,
   toggleTableEnabledInConfig,
 } from './RoiEditor';
 import { money } from './format';
@@ -460,5 +461,47 @@ describe('reorganized UI views', () => {
     expect(html).toContain('Căn chuẩn phối cảnh (Perspective)');
     expect(html).toContain('Độ rộng vùng đứng:');
     expect(html).toContain('Bật kính lúp phóng đại góc (3.5×)');
+  });
+
+  it('shouldRefreshRoiPreview refreshes background when source changes or ROI tab becomes active', () => {
+    expect(
+      shouldRefreshRoiPreview(
+        { active: false, sourceKey: 'a.mp4|VIDEO_LIVE|1' },
+        { active: false, sourceKey: 'b.mp4|VIDEO_LIVE|1' },
+        true,
+      ),
+    ).toEqual({ clearAutoPreview: true, refreshPreview: false });
+
+    expect(
+      shouldRefreshRoiPreview(
+        { active: false, sourceKey: 'b.mp4|VIDEO_LIVE|1' },
+        { active: true, sourceKey: 'b.mp4|VIDEO_LIVE|1' },
+        false,
+      ),
+    ).toEqual({ clearAutoPreview: false, refreshPreview: true });
+
+    expect(
+      shouldRefreshRoiPreview(
+        { active: true, sourceKey: 'a.mp4|VIDEO_LIVE|1' },
+        { active: true, sourceKey: 'b.mp4|VIDEO_LIVE|1' },
+        true,
+      ),
+    ).toEqual({ clearAutoPreview: true, refreshPreview: true });
+
+    expect(
+      shouldRefreshRoiPreview(
+        { active: false, sourceKey: 'a.mp4|VIDEO_LIVE|1' },
+        { active: true, sourceKey: 'a.mp4|VIDEO_LIVE|1' },
+        true,
+      ),
+    ).toEqual({ clearAutoPreview: false, refreshPreview: false });
+
+    expect(
+      shouldRefreshRoiPreview(
+        { active: false, sourceKey: 'a.mp4|VIDEO_LIVE|1' },
+        { active: true, sourceKey: 'a.mp4|VIDEO_LIVE|1' },
+        false,
+      ),
+    ).toEqual({ clearAutoPreview: false, refreshPreview: true });
   });
 });
