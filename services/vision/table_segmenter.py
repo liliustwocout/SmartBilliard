@@ -9,7 +9,8 @@ from __future__ import annotations
 import logging
 import math
 from pathlib import Path
-from typing import Sequence
+import threading
+from typing import Any, Sequence
 
 import cv2
 import numpy as np
@@ -24,6 +25,39 @@ from services.vision.calibration import Point, Polygon, TableZone, is_self_inter
 logger = logging.getLogger("smartbilliard.vision.table_segmenter")
 
 DEFAULT_TABLE_SEG_MODEL = Path("models/yolov8n-table-seg.onnx")
+_ORT_SEG_CACHE: dict[tuple[str, float, bool], tuple[Any, str]] = {}
+_ORT_SEG_LOCK = threading.Lock()
+
+
+def _forward_table_seg_onnx(model_path: Path, blob: np.ndarray, prefer_gpu: bool = False) -> Sequence[np.ndarray]:
+    """Run table-seg ONNX inference via cached ONNX Runtime (DirectML/CPU) with OpenCV fallback."""
+    resolved = model_path.resolve()
+    try:
+        import onnxruntime as ort
+
+        mtime = round(resolved.stat().st_mtime, 3)
+        key = (str(resolved), mtime, bool(prefer_gpu))
+        with _ORT_SEG_LOCK:
+            entry = _ORT_SEG_CACHE.get(key)
+            if entry is None:
+                providers: list[Any] = ["CPUExecutionProvider"]
+                if prefer_gpu and "DmlExecutionProvider" in ort.get_available_providers():
+                    providers = ["DmlExecutionProvider", "CPUExecutionProvider"]
+                opts = ort.SessionOptions()
+                opts.enable_mem_pattern = False
+                session = ort.InferenceSession(str(resolved), sess_options=opts, providers=providers)
+                input_name = session.get_inputs()[0].name
+                entry = (session, input_name)
+                _ORT_SEG_CACHE[key] = entry
+            session, input_name = entry
+        return session.run(None, {input_name: np.ascontiguousarray(blob, dtype=np.float32)})
+    except Exception as ort_err:
+        logger.debug("Table segmenter ORT fallback to OpenCV DNN (%s)", ort_err)
+        net = cv2.dnn.readNetFromONNX(str(resolved))
+        net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+        net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        net.setInput(blob)
+        return net.forward(net.getUnconnectedOutLayersNames())
 
 
 def _signed_polygon_area_xy(pts: np.ndarray) -> float:
@@ -208,12 +242,7 @@ class YoloTableSegmenter:
         orig_h, orig_w = frame.shape[:2]
 
         try:
-            # 1. Load network on-demand
-            net = cv2.dnn.readNetFromONNX(str(self.model_path))
-            net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-            net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-
-            # 2. Pre-process frame (Letterbox resize to 640x640)
+            # 1. Pre-process frame (Letterbox resize to 640x640)
             input_size = 640
             scale = min(input_size / orig_w, input_size / orig_h)
             nw, nh = int(orig_w * scale), int(orig_h * scale)
@@ -225,11 +254,9 @@ class YoloTableSegmenter:
             canvas[pad_h:pad_h + nh, pad_w:pad_w + nw] = resized
 
             blob = cv2.dnn.blobFromImage(canvas, 1.0 / 255.0, (input_size, input_size), swapRB=True, crop=False)
-            net.setInput(blob)
 
-            # 3. Forward pass
-            out_names = net.getUnconnectedOutLayersNames()
-            outputs = net.forward(out_names)
+            # 2. Forward pass (ONNX Runtime DirectML/CPU cached session, OpenCV fallback)
+            outputs = _forward_table_seg_onnx(self.model_path, blob, prefer_gpu=self.prefer_gpu)
 
             # Separate output0 (detections) and output1 (prototype masks)
             if len(outputs) >= 2:

@@ -4,6 +4,7 @@ import type { ActivityState, Snapshot } from '../types';
 
 export type LabViewProps = {
   data: Snapshot;
+  active?: boolean;
   online: boolean;
   locked: boolean;
   simTable: number;
@@ -50,6 +51,7 @@ function getBannerDescription(data: Snapshot): string {
 
 export function LabView({
   data,
+  active = true,
   online,
   locked,
   simTable,
@@ -151,16 +153,24 @@ export function LabView({
               </button>
             </div>
             <div className="camera-mini-preview">
-              <img
-                src="/api/camera/stream"
-                alt="Xem nhanh luồng camera"
-                className="camera-mini-img"
-                onClick={onOpenLiveTab}
-                title="Nhấn để phóng to luồng camera"
-              />
-              <button type="button" className="camera-expand-btn" onClick={onOpenLiveTab}>
-                Phóng to ⛶
-              </button>
+              {active ? (
+                <>
+                  <img
+                    src="/api/camera/stream"
+                    alt="Xem nhanh luồng camera"
+                    className="camera-mini-img"
+                    onClick={onOpenLiveTab}
+                    title="Nhấn để phóng to luồng camera"
+                  />
+                  <button type="button" className="camera-expand-btn" onClick={onOpenLiveTab}>
+                    Phóng to ⛶
+                  </button>
+                </>
+              ) : (
+                <div className="live-stream-placeholder">
+                  <p>Tạm dừng luồng xem nhanh khi ẩn tab</p>
+                </div>
+              )}
             </div>
           </div>
 

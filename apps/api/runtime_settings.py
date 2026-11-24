@@ -22,7 +22,7 @@ OVERRIDE_KEYS = {"decision", "auto_open", "camera_source"}
 class DecisionUpdate(BaseModel):
     """Partial DecisionConfig; bounds and cross-field rules are enforced by DecisionConfig itself."""
     model_config = ConfigDict(extra="forbid")
-    policy: Literal["PERSON_ONLY", "PERSON_AND_CUE", "POSE_AND_CUE"] | None = None
+    policy: Literal["PERSON_ONLY", "PERSON_AND_CUE", "POSE_AND_CUE", "SMART_STANCE"] | None = None
     presence_seconds: float | None = None
     confidence_enter: float | None = None
     confidence_exit: float | None = None
@@ -32,6 +32,7 @@ class DecisionUpdate(BaseModel):
     cue_confidence: float | None = None
     unbilled_alert_seconds: float | None = None
     playing_hold_grace_seconds: float | None = None
+    posture_pause_grace_seconds: float | None = None
 
 
 class SettingsUpdate(BaseModel):

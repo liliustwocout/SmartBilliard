@@ -753,3 +753,20 @@ def test_staff_confirmation_preserves_camera_or_video_evidence_source(tmp_path):
             data = opened.json()
             assert data["trigger_source"] == "STAFF_CONFIRMATION"
             assert data["evidence_source"] == src
+
+
+def test_settings_accept_smart_stance_and_posture_pause_grace(tmp_path):
+    settings = Settings(database_url=f"sqlite:///{tmp_path / 'smart_settings.db'}")
+    with TestClient(create_app(settings, Clock()), base_url="http://127.0.0.1") as client:
+        res = client.post(
+            "/api/settings",
+            json={"decision": {"policy": "SMART_STANCE", "posture_pause_grace_seconds": 7.5}},
+        )
+        assert res.status_code == 200, res.text
+        decision = res.json()["decision"]
+        assert decision["policy"] == "SMART_STANCE"
+        assert decision["posture_pause_grace_seconds"] == pytest.approx(7.5)
+
+        reset = client.post("/api/settings/reset")
+        assert reset.status_code == 200, reset.text
+        assert reset.json()["decision"] == res.json()["decision_defaults"]

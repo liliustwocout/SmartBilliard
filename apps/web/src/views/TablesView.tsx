@@ -51,6 +51,9 @@ export function TablesView({
                 <button type="button" className="button primary" disabled={locked} onClick={() => onOpenTable(item)}>
                   Xác nhận mở {item.name}
                 </button>
+                <button type="button" className="button subtle" disabled={locked} onClick={() => onOpenTable(item, true)}>
+                  Tính bù giờ AI
+                </button>
               </div>
             ))}
           </div>
