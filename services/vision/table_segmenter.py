@@ -29,7 +29,7 @@ _ORT_SEG_CACHE: dict[tuple[str, float, bool], tuple[Any, str]] = {}
 _ORT_SEG_LOCK = threading.Lock()
 
 
-def _forward_table_seg_onnx(model_path: Path, blob: np.ndarray, prefer_gpu: bool = False) -> Sequence[np.ndarray]:
+def _forward_table_seg_onnx(model_path: Path, blob: np.ndarray, prefer_gpu: bool = True) -> Sequence[np.ndarray]:
     """Run table-seg ONNX inference via cached ONNX Runtime (DirectML/CPU) with OpenCV fallback."""
     resolved = model_path.resolve()
     try:
@@ -40,12 +40,24 @@ def _forward_table_seg_onnx(model_path: Path, blob: np.ndarray, prefer_gpu: bool
         with _ORT_SEG_LOCK:
             entry = _ORT_SEG_CACHE.get(key)
             if entry is None:
-                providers: list[Any] = ["CPUExecutionProvider"]
-                if prefer_gpu and "DmlExecutionProvider" in ort.get_available_providers():
-                    providers = ["DmlExecutionProvider", "CPUExecutionProvider"]
                 opts = ort.SessionOptions()
                 opts.enable_mem_pattern = False
-                session = ort.InferenceSession(str(resolved), sess_options=opts, providers=providers)
+                session = None
+                if prefer_gpu and "DmlExecutionProvider" in ort.get_available_providers():
+                    try:
+                        session = ort.InferenceSession(
+                            str(resolved),
+                            sess_options=opts,
+                            providers=["DmlExecutionProvider", "CPUExecutionProvider"],
+                        )
+                    except Exception:
+                        session = None
+                if session is None:
+                    session = ort.InferenceSession(
+                        str(resolved),
+                        sess_options=opts,
+                        providers=["CPUExecutionProvider"],
+                    )
                 input_name = session.get_inputs()[0].name
                 entry = (session, input_name)
                 _ORT_SEG_CACHE[key] = entry
@@ -209,7 +221,7 @@ class YoloTableSegmenter:
     def __init__(
         self,
         model_path: Path | str = DEFAULT_TABLE_SEG_MODEL,
-        prefer_gpu: bool = False,
+        prefer_gpu: bool = True,
     ) -> None:
         self.model_path = Path(model_path)
         self.prefer_gpu = prefer_gpu
