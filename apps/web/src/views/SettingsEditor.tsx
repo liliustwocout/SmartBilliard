@@ -14,10 +14,12 @@ const FIELDS: Array<{ key: NumericKey; label: string; unit: string; step: number
   { key: 'cooldown_seconds', label: 'Cooldown sau thanh toán', unit: 'giây', step: 1, hint: 'AI không gợi ý lại bàn ngay sau khi chốt.' },
   { key: 'unbilled_alert_seconds', label: 'Cảnh báo quên mở bàn sau', unit: 'giây', step: 10, hint: 'Chơi quá lâu mà chưa mở thì báo đỏ.' },
   { key: 'playing_hold_grace_seconds', label: 'Giữ trạng thái đang chơi', unit: 'giây', step: 1, hint: 'Cho phép gián đoạn ngắn khi đang đánh.' },
+  { key: 'posture_pause_grace_seconds', label: 'Ân hạn đứng nghỉ giữa cơ', unit: 'giây', step: 0.5, hint: 'Giữ bộ đếm ứng viên khi người chơi đứng thẳng nhìn bi.' },
   { key: 'cue_confidence', label: 'Confidence gậy', unit: '0–1', step: 0.01, hint: 'Chỉ dùng khi có model gậy đã kiểm chứng.' },
 ];
 
 const POLICIES: Array<[DecisionSettings['policy'], string]> = [
+  ['SMART_STANCE', 'Tư thế thông minh + mặt nỉ (SMART_STANCE)'],
   ['PERSON_ONLY', 'Chỉ người (PERSON_ONLY)'],
   ['PERSON_AND_CUE', 'Người + gậy (cần model gậy)'],
   ['POSE_AND_CUE', 'Tư thế + gậy (cần model gậy)'],

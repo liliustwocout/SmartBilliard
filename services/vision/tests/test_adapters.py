@@ -170,6 +170,37 @@ def test_rtsp_camera_source_sanitization_and_backoff():
         assert rtsp.status == "CLOSED"
 
 
+def test_rtsp_sets_tcp_transport_and_skips_redundant_grab_when_fresh(monkeypatch):
+    import os
+    monkeypatch.delenv("OPENCV_FFMPEG_CAPTURE_OPTIONS", raising=False)
+    with patch("cv2.VideoCapture") as mock_cap_cls:
+        mock_cap = MagicMock()
+        mock_cap.isOpened.return_value = True
+        mock_cap.get.side_effect = lambda prop: 25.0 if prop == cv2.CAP_PROP_FPS else 640.0
+        mock_cap.read.return_value = (True, np.ones((480, 640, 3), dtype=np.uint8))
+        mock_cap_cls.return_value = mock_cap
+
+        rtsp = RTSPCameraSource(rtsp_url="rtsp://admin:pass@192.168.1.50:554/cam/realmonitor", drop_stale_frames=True)
+        assert "rtsp_transport;tcp" in os.environ.get("OPENCV_FFMPEG_CAPTURE_OPTIONS", "")
+
+        # First read always grabs stale initial buffer
+        ok, _ = rtsp.read()
+        assert ok is True
+        assert mock_cap.grab.call_count == 1
+
+        # Immediate back-to-back read (< 48ms) skips redundant grab()
+        ok, _ = rtsp.read()
+        assert ok is True
+        assert mock_cap.grab.call_count == 1
+
+        # Simulated lag (> 1.2 * frame_period = 48ms) triggers grab() again
+        rtsp._last_read_time -= 0.10
+        ok, _ = rtsp.read()
+        assert ok is True
+        assert mock_cap.grab.call_count == 2
+        rtsp.close()
+
+
 def test_create_video_source_factory(tmp_path: Path):
     video_file = tmp_path / "sample.mp4"
     _create_synthetic_video(video_file, frame_count=1)

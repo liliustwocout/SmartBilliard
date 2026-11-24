@@ -5,6 +5,7 @@ from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
 import re
+import time
 from typing import Callable
 from uuid import uuid4
 
@@ -98,6 +99,7 @@ def create_app(settings: Settings | None = None,
     lock = asyncio.Lock()
     clients: set[asyncio.Queue] = set()
     main_loop: asyncio.AbstractEventLoop | None = None
+    last_camera_idle_emit: dict[int, float] = {}
 
     def process_observation(db, table_id: int, event_id: str, present: bool,
                             confidence: float, ambiguous: bool, source: str,
@@ -162,6 +164,18 @@ def create_app(settings: Settings | None = None,
         eid = str(uuid4())
         try:
             with Session(engine) as db:
+                if not summary.present and not summary.ambiguous and not summary.felt_motion:
+                    tbl = db.get(Table, table_id)
+                    if tbl is not None and tbl.memory.get("state", "EMPTY") == "EMPTY" and active_session(db, table_id) is None:
+                        now_mono = time.monotonic()
+                        if now_mono - last_camera_idle_emit.get(table_id, -999.0) < 30.0:
+                            return
+                        last_camera_idle_emit[table_id] = now_mono
+                    else:
+                        last_camera_idle_emit.pop(table_id, None)
+                else:
+                    last_camera_idle_emit.pop(table_id, None)
+
                 result = process_observation(
                     db, table_id, eid, summary.present, summary.confidence,
                     summary.ambiguous, source_type, summary.cue_confidence,

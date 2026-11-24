@@ -144,7 +144,7 @@ export type DecisionSettings = {
   presence_seconds: number; confidence_enter: number; confidence_exit: number;
   max_observation_gap_seconds: number; absence_grace_seconds: number; cooldown_seconds: number;
   cue_confidence: number; unbilled_alert_seconds: number; playing_hold_grace_seconds: number;
-  posture_pause_grace_seconds?: number;
+  posture_pause_grace_seconds: number;
 };
 
 export type RuntimeSettings = {

@@ -9,6 +9,7 @@ Supports:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 import time
@@ -282,6 +283,7 @@ class RTSPCameraSource:
 
         self._current_reconnect_delay: float = reconnect_initial_delay
         self._last_reconnect_attempt: float = 0.0
+        self._last_read_time: float = 0.0
 
         self._open()
 
@@ -290,10 +292,14 @@ class RTSPCameraSource:
 
     def _open(self) -> bool:
         self._last_reconnect_attempt = time.monotonic()
+        self._last_read_time = 0.0
         if self._cap is not None:
             self._cap.release()
             self._cap = None
 
+        if self.rtsp_url.lower().startswith(("rtsp://", "rtsps://")):
+            # Enforce TCP transport and socket timeout to avoid UDP block artifacts on Wi-Fi cameras
+            os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp|stimeout;5000000")
         logger.info("Connecting to RTSP stream: %s", self.sanitized_url)
         self._cap = cv2.VideoCapture(self.rtsp_url)
 
@@ -353,8 +359,11 @@ class RTSPCameraSource:
             if self._cap is None:
                 return False, None
 
-            # Discard any buffered frames to guarantee latest frame if drop_stale_frames is enabled
-            if self.drop_stale_frames:
+            # Only grab to flush stale buffer on initial read or after reading lag exceeds one frame period
+            frame_period = 1.0 / (self._fps if self._fps > 1.0 else 25.0)
+            if self.drop_stale_frames and (
+                self._last_read_time == 0.0 or (now - self._last_read_time) >= 1.2 * frame_period
+            ):
                 self._cap.grab()
 
             ret, frame = self._cap.read()
@@ -362,9 +371,11 @@ class RTSPCameraSource:
                 logger.warning("RTSP read failed for %s. Entering reconnection mode.", self.sanitized_url)
                 self._status = "CONNECTING"
                 self._last_reconnect_attempt = now
+                self._last_read_time = 0.0
                 self._current_reconnect_delay = self.reconnect_initial_delay
                 return False, None
 
+            self._last_read_time = time.monotonic()
             return True, frame
 
     def close(self) -> None:

@@ -298,6 +298,7 @@ export default function App() {
               <div style={{ display: tab === 'lab' ? 'block' : 'none' }}>
                 <LabView
                   data={data}
+                  active={tab === 'lab'}
                   online={online}
                   locked={locked}
                   simTable={simTable}

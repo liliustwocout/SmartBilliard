@@ -168,7 +168,43 @@ describe('reorganized UI views', () => {
     expect(html).toContain('alert-banner-confirm');
     expect(html).toContain('Xem camera');
     expect(html).toContain('Xác nhận mở');
+    expect(html).toContain('Tính bù giờ AI');
     expect(html).toContain('AI tạm dừng');
+  });
+
+  it('LabView pauses MJPEG stream preview when tab is inactive', () => {
+    const data = makeSnapshot();
+    const hiddenHtml = renderToStaticMarkup(
+      <LabView
+        data={data}
+        active={false}
+        online={true}
+        locked={false}
+        simTable={1}
+        onChangeSimTable={vi.fn()}
+        simulating={false}
+        onStartSimulation={vi.fn()}
+        onStopSimulation={vi.fn()}
+        onReplayLastEvent={vi.fn()}
+        hasLastEvent={false}
+        ambiguous={false}
+        onChangeAmbiguous={vi.fn()}
+        confidence={0.9}
+        onChangeConfidence={vi.fn()}
+        activityState="PLAYING"
+        onChangeActivityState={vi.fn()}
+        logTableId={1}
+        onChangeLogTableId={vi.fn()}
+        onStartCamera={vi.fn()}
+        onStopCamera={vi.fn()}
+        onOpenLiveTab={vi.fn()}
+        onJumpCalibration={vi.fn()}
+        onNotice={vi.fn()}
+        onError={vi.fn()}
+      />,
+    );
+    expect(hiddenHtml).not.toContain('/api/camera/stream');
+    expect(hiddenHtml).toContain('Tạm dừng luồng xem nhanh khi ẩn tab');
   });
 
   it('LabView shows mode banner, artificial data simulator, camera mini preview, and table-scoped log selector', () => {
