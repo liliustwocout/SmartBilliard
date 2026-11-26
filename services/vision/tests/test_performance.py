@@ -137,3 +137,68 @@ def test_unavailable_gpu_initialization_preserves_opencv_fallback(tmp_path):
 def test_invalid_performance_config_is_rejected(values):
     with pytest.raises(ValueError):
         VisionPerformanceConfig(**values)
+
+
+def _fake_ort_session(providers):
+    session = Mock()
+    session.get_providers.return_value = list(providers)
+    session.get_inputs.return_value = [SimpleNamespace(name="images")]
+    return session
+
+
+def test_directml_init_falls_back_to_ort_cpu_on_machines_without_dx12_gpu(tmp_path):
+    model = tmp_path / "pose.onnx"
+    model.write_bytes(b"onnx")
+
+    # Case 1: Only CPUExecutionProvider is compiled in (e.g. non-DirectML environment)
+    fake_ort_no_dml = SimpleNamespace(
+        SessionOptions=lambda: SimpleNamespace(),
+        ExecutionMode=SimpleNamespace(ORT_SEQUENTIAL=0),
+        get_available_providers=lambda: ["CPUExecutionProvider"],
+        InferenceSession=Mock(return_value=_fake_ort_session(["CPUExecutionProvider"])),
+    )
+    with patch.dict("sys.modules", {"onnxruntime": fake_ort_no_dml}):
+        net = DirectMlNet(model, device_id=0)
+        assert net.backend_label == "ORT_CPU"
+
+    # Case 2: DmlExecutionProvider listed but fails on CPU-only PC / VM -> falls back to ORT_CPU
+    cpu_session = _fake_ort_session(["CPUExecutionProvider"])
+    def create_session(_path, sess_options=None, providers=None):
+        if providers and any(isinstance(p, tuple) and p[0] == "DmlExecutionProvider" for p in providers):
+            raise RuntimeError("No DX12 adapter")
+        return cpu_session
+
+    fake_ort_fail_dml = SimpleNamespace(
+        SessionOptions=lambda: SimpleNamespace(),
+        ExecutionMode=SimpleNamespace(ORT_SEQUENTIAL=0),
+        get_available_providers=lambda: ["DmlExecutionProvider", "CPUExecutionProvider"],
+        InferenceSession=Mock(side_effect=create_session),
+    )
+    with patch.dict("sys.modules", {"onnxruntime": fake_ort_fail_dml}):
+        net = DirectMlNet(model, device_id=0)
+        assert net.backend_label == "ORT_CPU"
+
+
+def test_directml_init_retries_default_adapter_zero_when_configured_adapter_missing(tmp_path):
+    model = tmp_path / "pose.onnx"
+    model.write_bytes(b"onnx")
+    seen_devices = []
+
+    def create_session(_path, sess_options=None, providers=None):
+        dev = int(providers[0][1]["device_id"])
+        seen_devices.append(dev)
+        if dev != 0:
+            raise RuntimeError("Invalid adapter index")
+        return _fake_ort_session(["DmlExecutionProvider", "CPUExecutionProvider"])
+
+    fake_ort = SimpleNamespace(
+        SessionOptions=lambda: SimpleNamespace(),
+        ExecutionMode=SimpleNamespace(ORT_SEQUENTIAL=0),
+        get_available_providers=lambda: ["DmlExecutionProvider", "CPUExecutionProvider"],
+        InferenceSession=Mock(side_effect=create_session),
+    )
+    with patch.dict("sys.modules", {"onnxruntime": fake_ort}):
+        net = DirectMlNet(model, device_id=1)
+        assert seen_devices == [1, 0]
+        assert net.device_id == 0
+        assert net.backend_label == "DIRECTML:0"
